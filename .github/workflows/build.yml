@@ -1,0 +1,119 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows
+            os: windows-latest
+            configure: cmake -B build -G "Visual Studio 17 2022" -A x64
+          - name: macOS
+            os: macos-latest
+            configure: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release "-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64"
+          - name: Linux
+            os: ubuntu-24.04
+            configure: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build libasound2-dev libfreetype-dev libfontconfig1-dev libx11-dev \
+            libxrandr-dev libxinerama-dev libxcursor-dev libxcomposite-dev libxext-dev libgl1-mesa-dev xvfb fonts-dejavu-core
+
+      - name: Install Ninja (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ninja
+
+      - name: Configure
+        run: ${{ matrix.configure }}
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Unit tests
+        run: ctest --test-dir build -C Release --output-on-failure
+
+      - name: UI snapshots
+        continue-on-error: true
+        shell: bash
+        run: |
+          mkdir -p snapshots
+          case "$RUNNER_OS" in
+            Windows) APP="build/Transport_artefacts/Release/Transport.exe"; RUN="" ;;
+            macOS)   APP="build/Transport_artefacts/Release/Transport.app/Contents/MacOS/Transport"; RUN="" ;;
+            Linux)   APP="build/Transport_artefacts/Release/Transport"; RUN="xvfb-run -a" ;;
+          esac
+          $RUN "$APP" --snapshot snapshots/main.png
+          $RUN "$APP" --snapshot snapshots/plugins.png --size 1400x900 --slots spectrum,loudness,goniometer,spectrogram,phase,scope,peakrms --cols 4 --seconds 6
+          $RUN "$APP" --snapshot snapshots/browser.png --browser --seconds 1.5
+          ls -la snapshots
+
+      - name: Package
+        shell: bash
+        run: |
+          mkdir -p dist
+          case "$RUNNER_OS" in
+            Windows)
+              cp build/Transport_artefacts/Release/Transport.exe dist/Transport-Windows-x64.exe ;;
+            macOS)
+              codesign --force --deep --sign - build/Transport_artefacts/Release/Transport.app
+              ditto -c -k --keepParent build/Transport_artefacts/Release/Transport.app dist/Transport-macOS.zip ;;
+            Linux)
+              tar -C build/Transport_artefacts/Release -czf dist/Transport-Linux-x64.tar.gz Transport ;;
+          esac
+          ls -la dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Transport-${{ matrix.name }}
+          path: dist/*
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: snapshots-${{ matrix.name }}
+          path: snapshots/*
+          if-no-files-found: ignore
+
+  release:
+    name: Publish "latest" release
+    needs: build
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: Transport-*
+          path: dist
+          merge-multiple: true
+
+      - name: Replace the latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          ls -la dist
+          gh release delete latest --yes --cleanup-tag || true
+          gh release create latest dist/* \
+            --target "${{ github.sha }}" \
+            --prerelease \
+            --title "Transport (latest build)" \
+            --notes "Automatic build of ${{ github.sha }}. Windows: run the .exe. macOS: unzip, then right-click Transport.app > Open the first time (the app is not notarised yet)."
