@@ -4,7 +4,11 @@ cmake_minimum_required(VERSION 3.22)
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum macOS version")
 
-project(Transport VERSION 0.3.0 LANGUAGES C CXX)
+project(Transport VERSION 0.4.0 LANGUAGES C CXX)
+
+if(APPLE)
+    enable_language(OBJC OBJCXX)
+endif()
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -36,7 +40,7 @@ juce_add_gui_app(Transport
     VERSION ${PROJECT_VERSION}
     ICON_BIG ${CMAKE_CURRENT_SOURCE_DIR}/resources/icon.png
     MICROPHONE_PERMISSION_ENABLED FALSE
-    DOCUMENT_EXTENSIONS mp3 wav flac aiff aif ogg m4a)
+    DOCUMENT_EXTENSIONS mp3 wav flac aiff aif ogg m4a mp4 m4v mov)
 
 target_sources(Transport PRIVATE
     ${TRANSPORT_CORE_SOURCES}
@@ -53,7 +57,36 @@ target_sources(Transport PRIVATE
     src/app/TitleBar.cpp
     src/app/TaskbarPlayer.cpp
     src/app/DefaultPlayer.cpp
+    src/app/VideoPlayer.cpp
+    src/app/VideoView.cpp
+    src/app/media/MediaCommon.cpp
     src/app/MainComponent.cpp)
+
+# ---------------------------------------------------------------- video backend (the platform's own decoders)
+if(WIN32)
+    target_sources(Transport PRIVATE src/app/media/MediaWindows.cpp)
+    target_link_libraries(Transport PRIVATE mfplat mfreadwrite mfuuid)
+    set(TRANSPORT_VIDEO "Media Foundation")
+elseif(APPLE)
+    target_sources(Transport PRIVATE src/app/media/MediaMac.mm)
+    set_source_files_properties(src/app/media/MediaMac.mm PROPERTIES COMPILE_FLAGS "-fobjc-arc")
+    target_link_libraries(Transport PRIVATE "-framework AVFoundation" "-framework CoreMedia" "-framework CoreVideo")
+    set(TRANSPORT_VIDEO "AVFoundation")
+else()
+    find_package(PkgConfig)
+    if(PkgConfig_FOUND)
+        pkg_check_modules(FFMPEG IMPORTED_TARGET libavformat libavcodec libswscale libswresample libavutil)
+    endif()
+    if(FFMPEG_FOUND)
+        target_sources(Transport PRIVATE src/app/media/MediaFFmpeg.cpp)
+        target_link_libraries(Transport PRIVATE PkgConfig::FFMPEG)
+        set(TRANSPORT_VIDEO "FFmpeg ${FFMPEG_libavformat_VERSION}")
+    else()
+        target_sources(Transport PRIVATE src/app/media/MediaNone.cpp)
+        set(TRANSPORT_VIDEO "none (install the FFmpeg development packages for video)")
+    endif()
+endif()
+message(STATUS "Transport video playback: ${TRANSPORT_VIDEO}")
 
 if(APPLE)
     target_link_libraries(Transport PRIVATE "-framework CoreServices")

@@ -16,6 +16,9 @@ struct TrackInfo
 /** Reads ID3v2 (MP3) or FLAC tags and embedded cover art; falls back to cover/folder images. */
 TrackInfo readTrackInfo (const juce::File& file);
 
+/** Anything Transport can play: audio, and video where the platform can decode it. */
 bool isAudioFile (const juce::File& file);
+/** "*.mp3;*.wav;..." for file choosers. */
+juce::String playableWildcard();
 juce::Array<juce::File> siblingAudioFiles (const juce::File& file);
 } // namespace tp

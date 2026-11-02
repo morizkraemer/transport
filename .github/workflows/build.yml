@@ -37,7 +37,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y ninja-build libasound2-dev libfreetype-dev libfontconfig1-dev libx11-dev \
-            libxrandr-dev libxinerama-dev libxcursor-dev libxcomposite-dev libxext-dev libgl1-mesa-dev xvfb fonts-dejavu-core
+            libxrandr-dev libxinerama-dev libxcursor-dev libxcomposite-dev libxext-dev libgl1-mesa-dev xvfb fonts-dejavu-core \
+            libavformat-dev libavcodec-dev libswscale-dev libswresample-dev libavutil-dev
 
       - name: Install Ninja (macOS)
         if: runner.os == 'macOS'
@@ -52,6 +53,20 @@ jobs:
       - name: Unit tests
         run: ctest --test-dir build -C Release --output-on-failure
 
+      - name: Video decoding (platform decoder)
+        shell: bash
+        run: |
+          case "$RUNNER_OS" in
+            Windows) APP="build/Transport_artefacts/Release/Transport.exe" ;;
+            macOS)   APP="build/Transport_artefacts/Release/Transport.app/Contents/MacOS/Transport" ;;
+            Linux)   APP="build/Transport_artefacts/Release/Transport" ;;
+          esac
+          "$APP" --probe-media tests/media/colors.mp4 --out probe-colors.json || true
+          "$APP" --probe-media tests/media/portrait-silent.mp4 --out probe-portrait.json || true
+          cat probe-colors.json; echo; cat probe-portrait.json; echo
+          if [ "$RUNNER_OS" = Windows ]; then PY=python; else PY=python3; fi
+          $PY tests/check_media.py probe-colors.json probe-portrait.json
+
       - name: UI snapshots
         continue-on-error: true
         shell: bash
@@ -65,6 +80,8 @@ jobs:
           $RUN "$APP" --snapshot snapshots/main.png
           $RUN "$APP" --snapshot snapshots/plugins.png --size 1400x900 --slots spectrum,loudness,goniometer,spectrogram,phase,scope,peakrms --cols 4 --seconds 6
           $RUN "$APP" --snapshot snapshots/browser.png --browser --seconds 1.5
+          $RUN "$APP" --snapshot snapshots/video.png --file "$PWD/tests/media/colors.mp4" --seek 0.1 --seconds 0.5
+          $RUN "$APP" --snapshot snapshots/video-portrait-fullscreen.png --file "$PWD/tests/media/portrait-silent.mp4" --seek 0.3 --seconds 0.5 --fullscreen --size 1280x720
           ls -la snapshots
 
       - name: Package

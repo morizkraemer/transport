@@ -9,6 +9,8 @@
 #include "PluginBrowser.h"
 #include "SlotGrid.h"
 #include "TitleBar.h"
+#include "VideoPlayer.h"
+#include "VideoView.h"
 #include "WaveformView.h"
 
 namespace tp
@@ -29,6 +31,13 @@ public:
     void openPluginBrowser()    { browser.open (-1, slotGrid.getIds()); }
     void setCustomizing (bool);
     void setAreaHeights (int header, int wave) { headerHeight = header; waveHeight = wave; resized(); }
+
+    // video
+    bool hasVideo() const { return videoLoaded; }
+    void setShowVideo (bool);
+    void setFullscreenVideo (bool);
+    /** Headless: decode the picture for the current position before taking a snapshot. */
+    bool syncVideoNow (int timeoutMs);
 
     // taskbar mini player hooks
     void previousTrack()  { skip (-1); }
@@ -71,6 +80,9 @@ private:
     struct Heights { int header, wave; };
     Heights effectiveHeights() const;
     void saveSnapshot();
+    bool videoWanted() const { return videoLoaded && showVideo && ! customizing && ! compact; }
+    void updateVideoLayout();
+    void loadVideoCover (const juce::File&, double duration);
     void showAudioSettings();
     void toast (const juce::String& text);
     void saveSettings();
@@ -89,6 +101,11 @@ private:
     WaveformView waveform;
     SlotGrid slotGrid;
     PluginBrowser browser;
+    VideoPlayer video;
+    VideoView videoView { video };
+    bool videoLoaded = false, showVideo = true, videoFullscreen = false;
+    Smoothed videoMix;
+    int coverToken = 0;
     juce::TooltipWindow tooltips { this, 700 };
 
     juce::ApplicationProperties properties;

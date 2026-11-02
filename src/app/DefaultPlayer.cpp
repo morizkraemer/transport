@@ -1,4 +1,5 @@
 #include "DefaultPlayer.h"
+#include "media/Media.h"
 
 #if JUCE_WINDOWS
  #ifndef NOMINMAX
@@ -49,6 +50,17 @@ juce::String makeDefault()
     {
         R::setValue (caps + "FileAssociations\\" + ext, kProgId);
         R::setValue (classes + ext + "\\OpenWithProgids\\" + kProgId, juce::String());
+    }
+
+    // videos: listed under "Open with" and selectable in Default Apps, but never taken over
+    const juce::String videoProgId = "Transport.VideoFile";
+    R::setValue (classes + videoProgId + "\\", "Video (Transport)");
+    R::setValue (classes + videoProgId + "\\DefaultIcon\\", "\"" + exe + "\",0");
+    R::setValue (classes + videoProgId + "\\shell\\open\\command\\", "\"" + exe + "\" \"%1\"");
+    for (auto& ext : media::videoExtensions())
+    {
+        R::setValue (caps + "FileAssociations\\." + ext, videoProgId);
+        R::setValue (classes + "." + ext + "\\OpenWithProgids\\" + videoProgId, juce::String());
     }
     R::setValue ("HKEY_CURRENT_USER\\Software\\RegisteredApplications\\Transport", "Software\\Transport\\Capabilities");
 

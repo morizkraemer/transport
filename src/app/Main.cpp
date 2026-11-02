@@ -1,4 +1,6 @@
 #include "MainComponent.h"
+#include "media/Media.h"
+#include "VideoPlayer.h"
 #include "TaskbarPlayer.h"
 
 namespace tp
@@ -260,6 +262,8 @@ int runSnapshot (const juce::StringArray& args)
         main->setCustomizing (true);
     if (args.contains ("--browser"))
         main->openPluginBrowser();
+    if (args.contains ("--fullscreen"))
+        main->setFullscreenVideo (true);
 
     const int frames = (int) (60.0 * value ("--seconds", "4").getDoubleValue());
     for (int i = 0; i < frames; ++i)
@@ -268,6 +272,9 @@ int runSnapshot (const juce::StringArray& args)
         main->tickFrame (1.0f / 60.0f);
     }
 
+    if (main->hasVideo() && ! main->syncVideoNow (8000))
+        std::printf ("video frame not ready\n");
+
     auto img = main->createComponentSnapshot (main->getLocalBounds(), true, 1.0f);
     out.deleteFile();
     juce::FileOutputStream stream (out);
@@ -275,6 +282,124 @@ int runSnapshot (const juce::StringArray& args)
     const bool ok = stream.openedOk() && png.writeImageToStream (img, stream);
     std::printf ("%s %s\n", ok ? "wrote" : "FAILED", out.getFullPathName().toRawUTF8());
     return ok ? 0 : 1;
+}
+
+/** --probe-media in.mp4 --out result.json: what the platform decoder sees (CI checks this on every OS). */
+int runProbe (const juce::StringArray& args)
+{
+    auto value = [&] (const char* key, const juce::String& fallback)
+    {
+        const int i = args.indexOf (key);
+        return i >= 0 && i + 1 < args.size() ? args[i + 1].unquoted() : fallback;
+    };
+    const juce::File in = juce::File::getCurrentWorkingDirectory().getChildFile (value ("--probe-media", {}));
+    const juce::File out = juce::File::getCurrentWorkingDirectory().getChildFile (value ("--out", "probe.json"));
+
+    auto* obj = new juce::DynamicObject();
+    juce::var result (obj);
+    media::StreamInfo info;
+    obj->setProperty ("backend", media::isSupported());
+    obj->setProperty ("isVideoFile", media::isVideoFile (in));
+    obj->setProperty ("probed", media::probe (in, info));
+    obj->setProperty ("duration", info.duration);
+    obj->setProperty ("hasVideo", info.hasVideo);
+    obj->setProperty ("hasAudio", info.hasAudio);
+    obj->setProperty ("width", info.width);
+    obj->setProperty ("height", info.height);
+    obj->setProperty ("rotation", info.rotation);
+    obj->setProperty ("fps", info.fps);
+    obj->setProperty ("videoCodec", info.videoCodec);
+    obj->setProperty ("audioCodec", info.audioCodec);
+
+    // sound through the same reader the player uses, with a jump back to test seeking
+    juce::AudioFormatManager fm;
+    fm.registerFormat (new media::MediaAudioFormat(), false);
+    fm.registerBasicFormats();
+    if (std::unique_ptr<juce::AudioFormatReader> reader (fm.createReaderFor (in)); reader != nullptr)
+    {
+        obj->setProperty ("sampleRate", reader->sampleRate);
+        obj->setProperty ("audioLength", (double) reader->lengthInSamples / reader->sampleRate);
+        juce::Array<juce::var> levels;
+        for (double t : { 2.0, 0.5, 1.0 })
+        {
+            const int n = (int) (reader->sampleRate * 0.25);
+            juce::AudioBuffer<float> buf (2, n);
+            reader->read (&buf, 0, n, (juce::int64) (t * reader->sampleRate), true, true);
+            const float rms = buf.getRMSLevel (0, 0, n);
+            levels.add (juce::Decibels::gainToDecibels (rms, -120.0f));
+        }
+        obj->setProperty ("rmsDb", levels);
+    }
+
+    juce::Array<juce::var> frames;
+    for (double t : { 0.5, 1.5, 2.5, 1.0 })
+    {
+        auto dec = media::openVideo (in);
+        if (dec == nullptr) break;
+        media::FrameBuffer fb;
+        double pts = -1.0;
+        dec->seek (t);
+        auto* f = new juce::DynamicObject();
+        f->setProperty ("t", t);
+        if (dec->read (fb, pts))
+        {
+            double r = 0, g = 0, b = 0;
+            int count = 0;
+            for (int y = fb.height / 4; y < fb.height * 3 / 4; y += 2)
+                for (int x = fb.width / 4; x < fb.width * 3 / 4; x += 2)
+                {
+                    const auto* px = fb.pixels.data() + (size_t) y * (size_t) fb.stride + (size_t) x * 4;
+                    b += px[0]; g += px[1]; r += px[2]; ++count;
+                }
+            f->setProperty ("pts", pts);
+            f->setProperty ("w", fb.width);
+            f->setProperty ("h", fb.height);
+            f->setProperty ("rgb", juce::Array<juce::var> { r / juce::jmax (1, count), g / juce::jmax (1, count), b / juce::jmax (1, count) });
+        }
+        frames.add (juce::var (f));
+    }
+    obj->setProperty ("frames", frames);
+
+    // real-time playback against a simulated clock, with jumps back and forward
+    if (info.hasVideo)
+    {
+        VideoPlayer player;
+        if (player.open (in))
+        {
+            const double frameDur = info.fps > 0.0 ? 1.0 / info.fps : 1.0 / 30.0;
+            double worstLag = 0.0, clock = 0.0;
+            int late = 0, ticks = 0;
+            juce::Array<juce::var> seeks;
+            auto run = [&] (double from, double seconds)
+            {
+                clock = from;
+                const auto start = juce::Time::getMillisecondCounterHiRes();
+                double firstOk = -1.0;
+                while ((juce::Time::getMillisecondCounterHiRes() - start) * 0.001 < seconds)
+                {
+                    clock = from + (juce::Time::getMillisecondCounterHiRes() - start) * 0.001;
+                    if (clock > info.duration - 0.05) break;
+                    player.sync (clock);
+                    const double lag = clock - player.pictureTime();
+                    const bool ok = lag >= -0.005 && lag < frameDur + 0.02;
+                    if (ok && firstOk < 0.0) firstOk = clock - from;
+                    if (firstOk >= 0.0) { worstLag = juce::jmax (worstLag, lag); ++ticks; if (! ok) ++late; }
+                    juce::Thread::sleep (8);
+                }
+                return firstOk;
+            };
+            for (auto [from, len] : { std::pair<double, double> { 0.0, 1.2 }, { 2.0, 0.6 }, { 0.3, 0.6 }, { 1.0, 0.6 } })
+                seeks.add (run (from, len));
+            obj->setProperty ("syncWorstLag", worstLag);
+            obj->setProperty ("syncLateTicks", late);
+            obj->setProperty ("syncTicks", ticks);
+            obj->setProperty ("syncSeekSettle", seeks);
+        }
+    }
+
+    out.replaceWithText (juce::JSON::toString (result));
+    std::printf ("%s\n", juce::JSON::toString (result).toRawUTF8());
+    return info.hasVideo || info.hasAudio ? 0 : 1;
 }
 
 //==============================================================================
@@ -290,6 +415,12 @@ public:
         juce::LookAndFeel::setDefaultLookAndFeel (&lookAndFeel);
 
         const auto args = juce::StringArray::fromTokens (commandLine, true);
+        if (args.contains ("--probe-media"))
+        {
+            setApplicationReturnValue (runProbe (args));
+            quit();
+            return;
+        }
         if (args.contains ("--snapshot"))
         {
             setApplicationReturnValue (runSnapshot (args));

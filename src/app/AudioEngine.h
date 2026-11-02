@@ -38,6 +38,8 @@ public:
     void   setPosition (double seconds);
     /** Position interpolated between audio callbacks so the playhead moves at display rate. */
     double getSmoothPosition() const;
+    /** What is coming out of the speakers right now (smooth position minus output latency): the video clock. */
+    double getAudiblePosition() const;
 
     void  setVolume (float zeroToOne);
     float getVolume() const     { return volume.load(); }

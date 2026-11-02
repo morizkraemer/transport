@@ -1,6 +1,7 @@
 #include "MainComponent.h"
 #include "TrackInfo.h"
 #include "DefaultPlayer.h"
+#include "media/Media.h"
 
 namespace tp
 {
@@ -143,6 +144,7 @@ MainComponent::MainComponent (bool isHeadless)
     addAndMakeVisible (header);
     addAndMakeVisible (waveform);
     addAndMakeVisible (slotGrid);
+    addChildComponent (videoView);
     splitHeader = std::make_unique<Splitter>();
     splitWave = std::make_unique<Splitter>();
     addAndMakeVisible (*splitHeader);
@@ -191,6 +193,13 @@ MainComponent::MainComponent (bool isHeadless)
         const int styleIndex = WaveformView::styleIds().indexOf (settings->getValue ("waveStyle", "bars"));
         if (! headless && styleIndex >= 0) waveform.setStyle ((WaveformView::Style) styleIndex, false);
     }
+
+    // ---- video
+    videoView.onTogglePlay = [this] { header.onPlayPause(); };
+    videoView.onToggleFullscreen = [this] { setFullscreenVideo (! videoFullscreen); };
+    videoView.onShowPlugins = [this] { setShowVideo (false); };
+    videoView.onSeek = [this] (double s) { engine.setPosition (s); };
+    showVideo = headless || settings->getBoolValue ("showVideo", true);
 
     // ---- slots
     slotGrid.onBrowseRequested = [this] (int index) { browser.open (index, slotGrid.getIds()); };
@@ -276,6 +285,9 @@ MainComponent::MainComponent (bool isHeadless)
 
 MainComponent::~MainComponent()
 {
+    ++coverToken;
+    if (videoFullscreen && ! headless) juce::Desktop::getInstance().setKioskModeComponent (nullptr, false);
+    video.close();
     saveSettings();
     vblank = {};
     openGL.detach();
@@ -290,14 +302,36 @@ bool MainComponent::openFile (const juce::File& file, bool autoplay)
         return false;
     }
 
+    const bool isVideo = media::isVideoFile (file);
+    if (videoFullscreen && ! isVideo) setFullscreenVideo (false);
+    videoLoaded = isVideo && video.open (file);
+    if (! videoLoaded) video.close();
+    ++coverToken;   // cancels a frame grab still running for the previous file
+
     const auto info = readTrackInfo (file);
     const auto& d = engine.details();
 
     juce::StringArray meta;
     const auto dot = utf8 ("  \xc2\xb7  ");
-    juce::String line = d.formatName + dot + juce::String (d.sampleRate / 1000.0, std::fmod (d.sampleRate, 1000.0) != 0.0 ? 1 : 0) + " kHz";
-    if (file.hasFileExtension ("wav;aif;aiff;flac") && d.bitsPerSample > 0) line << dot << d.bitsPerSample << " bit";
-    else if (d.kbps > 0) line << dot << d.kbps << " kbps";
+    auto kHz = [] (double sr) { return juce::String (sr / 1000.0, std::fmod (sr, 1000.0) != 0.0 ? 1 : 0) + " kHz"; };
+    juce::String line;
+    if (videoLoaded)
+    {
+        const auto& vi = video.info();
+        const bool sideways = vi.rotation == 90 || vi.rotation == 270;
+        line = d.formatName;
+        if (vi.videoCodec.isNotEmpty()) line << dot << vi.videoCodec;
+        line << dot << (sideways ? vi.height : vi.width) << utf8 ("\xc3\x97") << (sideways ? vi.width : vi.height);
+        if (vi.fps > 0.0) line << dot << juce::String (vi.fps, std::abs (vi.fps - std::round (vi.fps)) > 0.01 ? 2 : 0) << " fps";
+        if (vi.hasAudio) line << dot << (vi.audioCodec.isNotEmpty() ? vi.audioCodec + " " : juce::String()) << kHz (d.sampleRate);
+        else line << dot << "no sound";
+    }
+    else
+    {
+        line = d.formatName + dot + kHz (d.sampleRate);
+        if (file.hasFileExtension ("wav;aif;aiff;flac") && d.bitsPerSample > 0) line << dot << d.bitsPerSample << " bit";
+        else if (d.kbps > 0) line << dot << d.kbps << " kbps";
+    }
     line << dot << juce::String ((double) d.fileSize / (1024.0 * 1024.0), 1) << " MB";
     meta.add (line);
 
@@ -314,6 +348,9 @@ bool MainComponent::openFile (const juce::File& file, bool autoplay)
     currentArtist = artist;
     currentCover = info.cover;
     slotGrid.setCover (info.cover);
+    videoView.setTrack (title, artist);
+    if (videoLoaded && ! info.cover.isValid())
+        loadVideoCover (file, video.info().duration);
     waveform.trackChanged (file);
     analyzer.resetTrack();
     loopA = loopB = -1.0;
@@ -328,7 +365,90 @@ bool MainComponent::openFile (const juce::File& file, bool autoplay)
     if (! headless) properties.getUserSettings()->setValue ("lastFile", file.getFullPathName());
     if (autoplay) engine.play();
     refreshQuickState();
+    updateVideoLayout();
     return true;
+}
+
+void MainComponent::loadVideoCover (const juce::File& file, double duration)
+{
+    // a frame from a tenth into the video (at most 30 s in) as the cover; decoded off the UI thread
+    const int token = coverToken;
+    const double at = juce::jmin (30.0, duration * 0.1);
+    juce::Component::SafePointer<MainComponent> safe (this);
+    auto apply = [safe, token] (const juce::Image& img)
+    {
+        if (safe == nullptr || safe->coverToken != token || ! img.isValid()) return;
+        safe->currentCover = img;
+        safe->header.setCover (img);
+        safe->slotGrid.setCover (img);
+    };
+    if (headless) { apply (VideoPlayer::grabFrame (file, at, 480)); return; }
+    juce::Thread::launch ([apply, file, at]
+    {
+        auto img = VideoPlayer::grabFrame (file, at, 480);
+        juce::MessageManager::callAsync ([apply, img] { apply (img); });
+    });
+}
+
+void MainComponent::setShowVideo (bool s)
+{
+    showVideo = s;
+    if (videoLoaded) toast (s ? juce::String ("Video") : utf8 ("Plugins \xc2\xb7 press V for the video"));
+    refreshQuickState();
+    saveSettings();
+}
+
+void MainComponent::setFullscreenVideo (bool on)
+{
+    if (on && ! videoLoaded) return;
+    if (on == videoFullscreen) return;
+    videoFullscreen = on;
+    if (on) { showVideo = true; if (customizing) setCustomizing (false); }
+
+    if (! headless)
+        if (auto* top = getTopLevelComponent())
+            juce::Desktop::getInstance().setKioskModeComponent (on ? top : nullptr, false);
+
+    for (auto* c : std::initializer_list<juce::Component*> { &titleBar, &header, &waveform })
+        c->setVisible (! on);
+    videoView.setFullscreen (on);
+    resized();
+    refreshQuickState();
+    grabKeyboardFocus();
+}
+
+bool MainComponent::syncVideoNow (int timeoutMs)
+{
+    if (! videoLoaded) return false;
+    const bool ok = video.syncBlocking (engine.getSmoothPosition(), timeoutMs);
+    videoView.pictureChanged();
+    videoMix.snap (videoWanted() ? 1.0f : 0.0f);
+    updateVideoLayout();
+    return ok;
+}
+
+void MainComponent::updateVideoLayout()
+{
+    if (videoFullscreen)
+    {
+        videoView.setTransform ({});
+        videoView.setBounds (getLocalBounds());
+        videoView.setAlpha (1.0f);
+        videoView.setVisible (true);
+        videoView.toFront (false);
+        slotGrid.setVisible (false);
+        return;
+    }
+
+    const auto area = slotGrid.getBounds();
+    const float m = videoMix.current;
+    videoView.setBounds (area);
+    videoView.setAlpha (m);
+    const float scale = 0.985f + 0.015f * m;
+    videoView.setTransform (juce::AffineTransform::scale (scale, scale, (float) area.getCentreX(), (float) area.getCentreY()));
+    videoView.setVisible (m > 0.001f && area.getHeight() > 30);
+    slotGrid.setAlpha (1.0f - m);
+    slotGrid.setVisible (m < 0.999f && area.getHeight() > 30);
 }
 
 void MainComponent::onVBlank (double ts)
@@ -383,12 +503,21 @@ void MainComponent::tickFrame (float dt)
         else { engine.pause(); engine.setPosition (0.0); }
     }
 
+    if (videoLoaded)
+    {
+        if (video.sync (engine.getAudiblePosition()))
+            videoView.pictureChanged();
+        videoView.setTransport (engine.getSmoothPosition(), engine.getLength(), engine.isPlaying());
+    }
+    videoMix.target = videoWanted() ? 1.0f : 0.0f;
+    if (videoMix.tick (dt, 9.0f)) updateVideoLayout();
+
     waveform.setPosition (engine.getSmoothPosition(), engine.getLength());
     header.setPlaying (engine.isPlaying());
     header.setTimeLine (engine.getLength() > 0.0 ? formatClock (engine.getSmoothPosition()) + " / " + formatClock (engine.getLength()) : juce::String());
 
     // 4. animations
-    for (auto* a : std::initializer_list<Animated*> { &titleBar, &header, &waveform, &slotGrid, &browser })
+    for (auto* a : std::initializer_list<Animated*> { &titleBar, &header, &waveform, &slotGrid, &browser, &videoView })
         a->animate (dt);
     splitHeader->animate (dt);
     splitWave->animate (dt);
@@ -465,7 +594,7 @@ void MainComponent::resized()
     header.setBounds (r.removeFromTop (heights.header));
     waveform.setBounds (r.removeFromTop (heights.wave));
     slotGrid.setBounds (r.reduced (6, 0).withTrimmedTop (6).withTrimmedBottom (6));
-    slotGrid.setVisible (slotGrid.getHeight() > 30);
+    updateVideoLayout();
     splitHeader->setBounds (0, header.getBottom() - 5, getWidth(), 10);
     splitWave->setBounds (0, waveform.getBottom() - 2, getWidth(), 10);
     splitHeader->toFront (false);
@@ -482,7 +611,7 @@ void MainComponent::resized()
 
 juce::Component::WindowControlKind MainComponent::controlAt (juce::Point<float> p) const
 {
-    if (p.y < (float) kTitleH)
+    if (! videoFullscreen && p.y < (float) kTitleH)
     {
         switch (titleBar.hitAt (p))
         {
@@ -512,6 +641,9 @@ bool MainComponent::keyPressed (const juce::KeyPress& k)
     if (k.getTextCharacter() == 'p')         { skip (-1); return true; }
     if (k.getTextCharacter() == 'm')         { runQuickAction (-1, QuickAction::mono); return true; }
     if (k.getTextCharacter() == 'l')         { runQuickAction (-1, QuickAction::abLoop); return true; }
+    if (k.getTextCharacter() == 'v' && videoLoaded) { setShowVideo (! showVideo); return true; }
+    if (k.getTextCharacter() == 'f' && videoLoaded) { setFullscreenVideo (! videoFullscreen); return true; }
+    if (k == juce::KeyPress::escapeKey && videoFullscreen)  { setFullscreenVideo (false); return true; }
     if (k == juce::KeyPress::escapeKey && browser.isOpen()) { browser.close(); return true; }
     if (k == juce::KeyPress::escapeKey && customizing)      { setCustomizing (false); return true; }
     if (k == juce::KeyPress::escapeKey && slotGrid.restoreMaximised()) return true;
@@ -539,8 +671,8 @@ void MainComponent::filesDropped (const juce::StringArray& files, int, int)
 //==============================================================================
 void MainComponent::showOpenDialog()
 {
-    chooser = std::make_unique<juce::FileChooser> ("Open a track", engine.currentFile().getParentDirectory(),
-                                                   "*.mp3;*.wav;*.flac;*.aif;*.aiff;*.ogg;*.m4a;*.aac;*.wma");
+    chooser = std::make_unique<juce::FileChooser> (media::isSupported() ? "Open a track or video" : "Open a track",
+                                                   engine.currentFile().getParentDirectory(), playableWildcard());
     chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
                           [this] (const juce::FileChooser& fc)
                           {
@@ -569,6 +701,11 @@ void MainComponent::showMainMenu()
     m.addSeparator();
     m.addItem (2, customizing ? "Done customizing" : utf8 ("Customize layout\xe2\x80\xa6"), true, customizing);
     m.addItem (8, utf8 ("Add plugin\xe2\x80\xa6"));
+    if (videoLoaded)
+    {
+        m.addItem (11, "Show video", true, showVideo);
+        m.addItem (12, "Full screen video", true, videoFullscreen);
+    }
     for (int i = 0; i < WaveformView::styleNames().size(); ++i)
         waveStyles.addItem (300 + i, WaveformView::styleNames()[i], true, (int) waveform.getStyle() == i);
     m.addSubMenu ("Waveform style", waveStyles);
@@ -616,6 +753,8 @@ void MainComponent::showMainMenu()
                                                                  "A music player that shows you what you hear.\nBuilt with JUCE.");
         else if (r == 7) { if (self.onClose) self.onClose(); }
         else if (r == 10) self.toast (defaultplayer::makeDefault());
+        else if (r == 11) self.setShowVideo (! self.showVideo);
+        else if (r == 12) self.setFullscreenVideo (! self.videoFullscreen);
         else if (r == 9)
         {
             self.taskbarPlayer = ! self.taskbarPlayer;
@@ -675,6 +814,8 @@ void MainComponent::refreshQuickState()
     header.setQuickActive (QuickAction::abLoop, loopA >= 0.0);
     header.setQuickActive (QuickAction::compact, compact);
     header.setQuickActive (QuickAction::customize, customizing);
+    header.setQuickActive (QuickAction::video, videoLoaded && showVideo);
+    header.setQuickActive (QuickAction::fullscreen, videoFullscreen);
     if (auto* top = getTopLevelComponent())
         header.setQuickActive (QuickAction::alwaysOnTop, top->isAlwaysOnTop());
 }
@@ -717,6 +858,14 @@ void MainComponent::runQuickAction (int, QuickAction a)
         case QuickAction::compact:  setCompact (! compact); break;
         case QuickAction::customize: setCustomizing (! customizing); break;
         case QuickAction::snapshot: saveSnapshot(); break;
+        case QuickAction::video:
+            if (videoLoaded) setShowVideo (! showVideo);
+            else toast ("Open a video to show it here");
+            break;
+        case QuickAction::fullscreen:
+            if (videoLoaded) setFullscreenVideo (! videoFullscreen);
+            else toast ("Open a video first");
+            break;
         case QuickAction::count:    break;
     }
     refreshQuickState();
@@ -916,6 +1065,7 @@ void MainComponent::saveSettings()
     s->setValue ("waveHeight", waveHeight);
     s->setValue ("uiScale", (double) uiScale);
     s->setValue ("taskbarPlayer", taskbarPlayer);
+    s->setValue ("showVideo", showVideo);
     s->setValue ("waveStyle", WaveformView::styleIds()[(int) waveform.getStyle()]);
     s->setValue ("slotStates", juce::JSON::toString (juce::var (slotGrid.getStates()), true));
     juce::StringArray ids;

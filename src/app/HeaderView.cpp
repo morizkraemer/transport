@@ -282,6 +282,15 @@ void HeaderView::setTrack (const juce::Image& newCover, const juce::String& newT
     repaint();
 }
 
+void HeaderView::setCover (const juce::Image& newCover)
+{
+    previousCover = cover;
+    cover = newCover;
+    artFade.snap (0.0f);
+    artFade.target = 1.0f;
+    repaint();
+}
+
 void HeaderView::setPlaying (bool p)
 {
     playing = p;

@@ -16,6 +16,8 @@ public:
     ~HeaderView() override;
 
     void setTrack (const juce::Image& cover, const juce::String& title, const juce::String& artist, const juce::StringArray& metaLines);
+    /** Crossfades to new art for the same track (e.g. a frame grabbed from a video). */
+    void setCover (const juce::Image& cover);
     void setPlaying (bool playing);
     void setVolume (float v);
     void setQuickActions (const std::vector<QuickAction>& actions, int columns);

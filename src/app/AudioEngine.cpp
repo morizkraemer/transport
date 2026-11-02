@@ -1,4 +1,5 @@
 #include "AudioEngine.h"
+#include "media/Media.h"
 
 namespace tp
 {
@@ -117,6 +118,9 @@ private:
 //==============================================================================
 AudioEngine::AudioEngine()
 {
+    // platform decoders first, so videos (and m4a on Windows) are read by the same decoder as their picture
+    if (media::isSupported())
+        formatManager.registerFormat (new media::MediaAudioFormat(), false);
     formatManager.registerBasicFormats();
     processor = std::make_unique<Processor> (*this);
     readAheadThread.startThread (juce::Thread::Priority::high);
@@ -227,6 +231,18 @@ void AudioEngine::setPosition (double seconds)
     transport.setPosition (seconds);
     lastBlockPosition = seconds;
     lastBlockTime = nowSeconds();
+}
+
+double AudioEngine::getAudiblePosition() const
+{
+    if (! transport.isPlaying() || offline)
+        return getSmoothPosition();
+    // what comes out of the speakers lags the last rendered block by the device latency
+    double latency = 0.0;
+    if (auto* device = const_cast<juce::AudioDeviceManager&> (deviceManager).getCurrentAudioDevice())
+        if (device->getCurrentSampleRate() > 0.0)
+            latency = (device->getOutputLatencyInSamples() + device->getCurrentBufferSizeSamples()) / device->getCurrentSampleRate();
+    return juce::jmax (0.0, getSmoothPosition() - juce::jlimit (0.0, 0.5, latency));
 }
 
 double AudioEngine::getSmoothPosition() const

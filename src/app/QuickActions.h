@@ -8,7 +8,7 @@ enum class QuickAction
 {
     monitor, playlist, addVisualizer, dim,
     open, mono, swap, soloLeft, soloRight, mid, side, bypass,
-    abLoop, alwaysOnTop, compact, snapshot, customize,
+    abLoop, alwaysOnTop, compact, snapshot, customize, video, fullscreen,
     count
 };
 
@@ -41,6 +41,8 @@ inline const std::vector<QuickActionInfo>& quickActions()
         { QuickAction::compact,       "compact",  "Compact",           "Hide the plugin row",                    true },
         { QuickAction::snapshot,      "snapshot", "Snapshot",          "Save the window as a PNG",               false },
         { QuickAction::customize,     "customize","Customize layout",  "Add, arrange and size plugins and areas", true },
+        { QuickAction::video,         "video",    "Video / plugins",   "Show the video or the plugins below the waveform", true },
+        { QuickAction::fullscreen,    "fullscreen","Full screen video","Play the video on the whole screen",     false },
     };
     return list;
 }
@@ -148,6 +150,24 @@ inline void drawQuickActionIcon (juce::Graphics& g, QuickAction a, juce::Rectang
         case QuickAction::customize:
             for (int i = 0; i < 4; ++i)
                 g.drawRoundedRectangle (juce::Rectangle<float> (11, 11).withCentre (centre.translated ((i % 2) ? 7.0f : -7.0f, (i / 2) ? 7.0f : -7.0f)), 2.0f, 1.8f);
+            break;
+        case QuickAction::video:
+            p.addRoundedRectangle (centre.x - 14, centre.y - 10, 28, 20, 3.0f);
+            g.strokePath (p, juce::PathStrokeType (1.8f));
+            p.clear();
+            p.addTriangle (centre.x - 3.5f, centre.y - 5.0f, centre.x + 5.5f, centre.y, centre.x - 3.5f, centre.y + 5.0f);
+            g.fillPath (p);
+            break;
+        case QuickAction::fullscreen:
+            for (int i = 0; i < 4; ++i)
+            {
+                const float sx = (i % 2) ? 1.0f : -1.0f, sy = (i / 2) ? 1.0f : -1.0f;
+                const auto corner = centre.translated (sx * 12.0f, sy * 9.0f);
+                p.startNewSubPath (corner.translated (-sx * 7.0f, 0));
+                p.lineTo (corner);
+                p.lineTo (corner.translated (0, -sy * 6.0f));
+            }
+            g.strokePath (p, juce::PathStrokeType (1.8f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
             break;
         case QuickAction::count:
             break;

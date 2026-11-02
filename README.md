@@ -8,11 +8,16 @@ Grab the newest **vX.Y.Z** release from the Releases page (a rolling *developmen
 
 - **Windows** — `Transport-Windows-x64.exe`, just run it (no installer, no runtime needed).
 - **macOS** — `Transport-macOS.zip` (Apple Silicon + Intel). Unzip, then right-click `Transport.app` → **Open** the first time, because the app isn't notarised yet.
-- **Linux** — `Transport-Linux-x64.tar.gz`.
+- **Linux** — `Transport-Linux-x64.tar.gz`. Video needs the system FFmpeg libraries (`sudo apt install ffmpeg` on Ubuntu/Debian).
 
 ## Using it
 
-- Drop an audio file on the window, or click the cover / waveform to open one (MP3, WAV, FLAC, AIFF, OGG; M4A/AAC/WMA on Windows and macOS).
+- Drop an audio file on the window, or click the cover / waveform to open one (MP3, WAV, FLAC, AIFF, OGG, M4A/AAC, WMA on Windows).
+- **Video:** open a video the same way. The picture takes the place of the plugins; its sound runs through Transport like any track, so waveform, meters and effects work as usual. Click the picture to play/pause, double-click (or **F**) for full screen, **V** or the ▦ button switches between video and plugins.
+  - Windows (Media Foundation): MP4, MOV, M4V, MKV, AVI, WMV, 3GP
+  - macOS (AVFoundation): MP4, MOV, M4V, 3GP
+  - Linux (FFmpeg): all of the above plus WebM, FLV, MPEG, TS, OGV
+  - Codecs are whatever the system decodes: H.264 everywhere; HEVC, VP9, AV1 depend on OS version and installed extensions.
 - Click or drag on the waveform to seek. **Space** plays/pauses, **← →** seek 5 s (Shift: 30 s), **↑ ↓** volume, **N / P** next/previous track in the folder, **M** mono, **L** A–B loop.
 - **Customize layout** (MENU or the grid quick-access button): drag slots to reorder, set each slot to narrow/normal/wide/extra wide, add or replace plugins, and drag the orange handles to set the height of the header and waveform. The plugins pack themselves into rows that always fill the space. **Done** or Esc leaves the mode.
 - **Maximize a plugin:** double-click it (or the ⤢ button on hover) to fill the whole plugin area; Esc restores.
@@ -53,7 +58,9 @@ ctest --test-dir build -C Release      # analysis unit tests (EBU R128, FFT, ste
 
 On Linux install the JUCE dependencies first (see `.github/workflows/build.yml`).
 
-`Transport --snapshot out.png [--size 1400x900] [--slots spectrum,loudness] [--cols 4] [--browser]` renders the UI headlessly with a generated test track — used by CI to check the interface on every platform.
+`Transport --snapshot out.png [--size 1400x900] [--slots spectrum,loudness] [--cols 4] [--browser] [--file clip.mp4] [--fullscreen]` renders the UI headlessly with a generated test track — used by CI to check the interface on every platform.
+
+`Transport --probe-media clip.mp4 --out result.json` reports what the platform video decoder sees (size, rotation, codecs, decoded colours, sound levels, real-time sync); CI runs it on the clips in `tests/media` and checks the result with `tests/check_media.py`.
 
 ## Releasing
 
@@ -70,6 +77,7 @@ file → decoder (read-ahead thread) → audio callback ─┬→ volume → out
 - The audio callback never locks or allocates; monitoring (mono, swap, solo…) runs there, then a copy goes into a lock-free FIFO.
 - `src/core` is pure DSP (FFT, K-weighted loudness with gating, correlation, polar field) and is unit-tested headlessly.
 - The UI is driven by the display's vertical blank (`VBlankAttachment`), so every animation — needle springs, meter ballistics, slot layout, play/pause morph — is frame-rate independent and in sync with the screen. On macOS the UI is rendered through OpenGL; on Windows JUCE uses Direct2D.
+- Video: `src/app/media` wraps the platform decoder (Media Foundation / AVFoundation / FFmpeg). The sound is exposed as a normal `AudioFormatReader`, so the audio engine is the clock; `VideoPlayer` decodes pictures a few frames ahead on its own thread and shows the one matching the audible position (output latency compensated).
 - Plugins implement `Visualizer::update (const AnalysisFrame&, float dt)` + `paint()`. Add one to the registry in `src/app/Visualizers.cpp`.
 
 ## Licence

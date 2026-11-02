@@ -1,4 +1,5 @@
 #include "TrackInfo.h"
+#include "media/Media.h"
 
 namespace tp
 {
@@ -220,9 +221,29 @@ TrackInfo readTrackInfo (const juce::File& file)
     return info;
 }
 
+namespace
+{
+juce::StringArray playableExtensions()
+{
+    juce::StringArray e { "mp3", "wav", "flac", "aif", "aiff", "ogg", "m4a", "aac", "wma" };
+    e.addArray (media::extraAudioExtensions());
+    e.addArray (media::videoExtensions());
+    e.removeDuplicates (true);
+    return e;
+}
+}
+
 bool isAudioFile (const juce::File& file)
 {
-    return file.hasFileExtension ("mp3;wav;flac;aif;aiff;ogg;m4a;aac;wma");
+    static const auto exts = playableExtensions();
+    return exts.contains (file.getFileExtension().trimCharactersAtStart (".").toLowerCase());
+}
+
+juce::String playableWildcard()
+{
+    juce::StringArray w;
+    for (auto& e : playableExtensions()) w.add ("*." + e);
+    return w.joinIntoString (";");
 }
 
 juce::Array<juce::File> siblingAudioFiles (const juce::File& file)
