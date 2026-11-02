@@ -14,8 +14,12 @@ Grab the newest **vX.Y.Z** release from the Releases page (a rolling *developmen
 
 - Drop an audio file on the window, or click the cover / waveform to open one (MP3, WAV, FLAC, AIFF, OGG; M4A/AAC/WMA on Windows and macOS).
 - Click or drag on the waveform to seek. **Space** plays/pauses, **← →** seek 5 s (Shift: 30 s), **↑ ↓** volume, **N / P** next/previous track in the folder, **M** mono, **L** A–B loop.
-- **Plugin slots:** click **+** to add a plugin, hover a slot for replace/remove, drag a slot to reorder, right-click for columns.
-- **Quick-access buttons** (top right): left-click runs, right-click assigns another function or changes the grid size (2×2, 3×2, 4×2).
+- **Customize layout** (MENU or the grid quick-access button): drag slots to reorder, set each slot to narrow/normal/wide/extra wide, add or replace plugins, and drag the orange handles to set the height of the header and waveform. The plugins pack themselves into rows that always fill the space. **Done** or Esc leaves the mode.
+- **Maximize a plugin:** double-click it (or the ⤢ button on hover) to fill the whole plugin area; Esc restores.
+- **Quick-access buttons** (top right): left-click runs, right-click assigns another function or changes the grid size (2×2, 3×2, 4×2). A short header shows one row.
+- **Display size:** MENU → Display size (Small to Extra large).
+- **Windows taskbar mini player:** hover Transport's taskbar button for cover, title, progress and ⏮ ⏯ ⏭ (MENU → Taskbar mini player to turn off).
+- **Default player:** on first start Transport offers to become your default audio player (Windows opens Settings → Default apps for you to confirm; macOS switches directly). Also in MENU.
 
 ### Plugins (26)
 

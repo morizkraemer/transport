@@ -273,6 +273,7 @@ public:
             g.drawText (txt, Rectangle<float> (x - 20, 268, 40, 14), juce::Justification::centred, false);
 
         g.restoreState();
+        drawLabel (g, "POLAR STEREO FIELD  dBFS", getLocalBounds().toFloat().reduced (12, 8).removeFromTop (14), juce::Justification::centredLeft, theme::label, 10.0f);
     }
 
 private:
@@ -287,6 +288,26 @@ public:
     {
         const int n = numBars();
         bars.resize ((size_t) n);
+
+        readoutTimer += dt;
+        if (readoutTimer > 0.15f)
+        {
+            readoutTimer = 0.0f;
+            int best = -1;
+            const double binHz = f.sampleRate / kFftSize;
+            for (int b = juce::jmax (1, (int) (25.0 / binHz)); b < juce::jmin (kNumBins, (int) (18000.0 / binHz)); ++b)
+                if (best < 0 || f.spectrumDb[(size_t) b] > f.spectrumDb[(size_t) best]) best = b;
+            if (best > 0 && f.spectrumDb[(size_t) best] > -80.0f)
+            {
+                const float hz = (float) (best * binHz);
+                const int midi = juce::roundToInt (69.0f + 12.0f * std::log2 (hz / 440.0f));
+                static const char* names[12] = { "C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B" };
+                peakText = "peak " + (hz >= 1000.0f ? juce::String (hz / 1000.0f, 2) + " kHz" : juce::String (juce::roundToInt (hz)) + " Hz")
+                         + utf8 ("  \xc2\xb7  ") + names[((midi % 12) + 12) % 12] + juce::String (midi / 12 - 1)
+                         + utf8 ("  \xc2\xb7  ") + juce::String (f.spectrumDb[(size_t) best], 1) + " dB";
+            }
+            else peakText = {};
+        }
         bool moved = false;
 
         for (int i = 0; i < n; ++i)
@@ -305,6 +326,13 @@ public:
     void paint (juce::Graphics& g) override
     {
         auto area = getLocalBounds().toFloat().reduced (10, 8);
+        if (area.getHeight() > 90.0f)
+        {
+            auto head = area.removeFromTop (14);
+            drawLabel (g, "SPECTRUM  dB / Hz", head, juce::Justification::centredLeft, theme::label, 10.0f);
+            drawLabel (g, peakText, head, juce::Justification::centredRight, Colour (0xffd8d8d8), 10.0f);
+            area.removeFromTop (4);
+        }
         auto scaleCol = area.removeFromLeft (28);
         auto freqRow = area.removeFromBottom (14);
         area.removeFromBottom (4);
@@ -357,6 +385,8 @@ private:
 
     struct Bar { Smoothed value; float peak = 0, hold = 0, fall = 0; };
     std::vector<Bar> bars;
+    juce::String peakText;
+    float readoutTimer = 0.0f;
     const float floorDb = -90.0f;
 };
 
@@ -473,7 +503,8 @@ private:
 
         auto big = r.removeFromTop (juce::jmin (62.0f, r.getHeight() * 0.48f));
         drawLabel (g, "Integrated", big.removeFromTop (13), juce::Justification::centredLeft, Colour (0xffcfcfcf), 10.0f);
-        const float diff = integrated > -70.0f ? integrated - kTargets[target].lufs : 0.0f;
+        float diff = integrated > -70.0f ? integrated - kTargets[target].lufs : 0.0f;
+        if (std::abs (diff) < 0.05f) diff = 0.0f;
         g.setColour (integrated > -70.0f && diff > 1.0f ? theme::accent : theme::text);
         g.setFont (theme::mono (juce::jlimit (18.0f, 30.0f, big.getHeight() * 0.7f)));
         const auto txt = formatDb (integrated);
@@ -481,7 +512,7 @@ private:
         const float tw = juce::GlyphArrangement::getStringWidth (g.getCurrentFont(), txt);
         drawLabel (g, "LUFS", big.withTrimmedLeft (tw + 6).withTrimmedTop (big.getHeight() * 0.25f), juce::Justification::centredLeft, Colour (0xffd8d8d8), 11.0f);
         if (integrated > -70.0f)
-            drawLabel (g, (diff >= 0 ? "+" : "") + juce::String (diff, 1) + " LU vs target", big, juce::Justification::bottomRight, Colour (0xffbdbdbd), 9.5f);
+            drawLabel (g, (diff > 0 ? "+" : "") + juce::String (diff, 1) + " LU vs target", big, juce::Justification::bottomRight, Colour (0xffbdbdbd), 9.5f);
 
         const std::pair<const char*, juce::String> cells[] = {
             { "Momentary", formatDb (momentary) }, { "Short-term", formatDb (shortTerm) },
@@ -621,6 +652,7 @@ public:
         g.drawDashedLine ({ c.x + R * 0.5f, c.y - R * 0.5f, c.x - R * 0.5f, c.y + R * 0.5f }, dash, 2, 1.0f);
 
         g.drawImage (phosphor, area);
+        drawLabel (g, "GONIOMETER", getLocalBounds().toFloat().reduced (12, 8).removeFromTop (14), juce::Justification::centredLeft, theme::label, 10.0f);
 
         g.setColour (Colour (0xffd8d8d8));
         g.setFont (theme::font (10));
@@ -663,7 +695,7 @@ public:
     void paint (juce::Graphics& g) override
     {
         auto area = getLocalBounds().toFloat().reduced (14, 12);
-        drawLabel (g, utf8 ("PHASE  \xc2\xb7  BALANCE"), area.removeFromTop (14));
+        drawLabel (g, utf8 ("PHASE CORRELATION  \xc2\xb7  BALANCE"), area.removeFromTop (14));
         area.removeFromTop (6);
 
         g.setColour (shown < 0.0f ? theme::accent : theme::text);
@@ -747,6 +779,12 @@ public:
         auto full = getLocalBounds().toFloat().reduced (10, 8);
         const auto area = plotArea();
         g.drawImage (image, area);
+        {
+            auto tag = Rectangle<float> (100, 16).withPosition (area.getX() + 6, area.getY() + 6);
+            g.setColour (theme::titleBlock.withAlpha (0.6f));
+            g.fillRoundedRectangle (tag, 3.0f);
+            drawLabel (g, "SPECTROGRAM", tag, juce::Justification::centred, theme::label, 9.5f);
+        }
 
         g.setFont (theme::font (9.5f));
         g.setColour (Colour (0xffcfcfcf));
@@ -804,7 +842,8 @@ public:
 
     void paint (juce::Graphics& g) override
     {
-        auto area = getLocalBounds().toFloat().reduced (12, 14);
+        drawLabel (g, "OSCILLOSCOPE", getLocalBounds().toFloat().reduced (12, 8).removeFromTop (14), juce::Justification::centredLeft, theme::label, 10.0f);
+        auto area = getLocalBounds().toFloat().reduced (12, 14).withTrimmedTop (10);
         g.setColour (Colour (0xff666666));
         const float dash[] = { 3.0f, 3.0f };
         g.drawDashedLine ({ area.getX(), area.getCentreY(), area.getRight(), area.getCentreY() }, dash, 2, 1.0f);
@@ -857,7 +896,7 @@ public:
     void paint (juce::Graphics& g) override
     {
         auto area = getLocalBounds().toFloat().reduced (14, 12);
-        drawLabel (g, utf8 ("PEAK  \xc2\xb7  RMS"), area.removeFromTop (14));
+        drawLabel (g, utf8 ("PEAK  \xc2\xb7  RMS  dBFS"), area.removeFromTop (14));
         area.removeFromTop (8);
         auto readout = area.removeFromBottom (18);
 
@@ -892,7 +931,7 @@ public:
 
             g.setColour (theme::text);
             g.setFont (theme::mono (11));
-            g.drawText (formatDb (m.hold * 63.0f - 60.0f, 1), Rectangle<float> (bar.getX(), readout.getY(), barW, readout.getHeight()), juce::Justification::centred, false);
+            g.drawText ((c == 0 ? "L " : "R ") + formatDb (m.hold * 63.0f - 60.0f, 1), Rectangle<float> (bar.getX() - 6, readout.getY(), barW + 12, readout.getHeight()), juce::Justification::centred, false);
         }
     }
 
