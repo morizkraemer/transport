@@ -55,6 +55,7 @@ private:
     void applyQuickActions();
     void skip (int direction);
     void setCompact (bool);
+    void growForRows (int rows);
     void saveSnapshot();
     void showAudioSettings();
     void toast (const juce::String& text);

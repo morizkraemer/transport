@@ -5,6 +5,16 @@
 
 namespace tp
 {
+/** Where settings live: ~/.config/Transport on Linux, the usual app-data folders elsewhere. */
+inline juce::String configFolder()
+{
+   #if JUCE_LINUX
+    return ".config/Transport";
+   #else
+    return "Transport";
+   #endif
+}
+
 /** Literal UTF-8 text (juce::String treats plain char* as ASCII). */
 inline juce::String utf8 (const char* s) { return juce::String::fromUTF8 (s); }
 

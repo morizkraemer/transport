@@ -122,7 +122,7 @@ private:
             juce::PropertiesFile::Options o;
             o.applicationName = "Transport";
             o.filenameSuffix = ".window";
-            o.folderName = "Transport";
+            o.folderName = configFolder();
             o.osxLibrarySubFolder = "Application Support";
             return o;
         }());

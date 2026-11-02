@@ -372,10 +372,23 @@ juce::Rectangle<float> SlotGrid::cell (int index, int count) const
     return { area.getX() + (float) c * (w + kGap), area.getY() + (float) r * (h + kGap), w, h };
 }
 
+int SlotGrid::rowsFor (int count) const
+{
+    const int cols = juce::jmax (1, juce::jmin (columns, count));
+    return (count + cols - 1) / cols;
+}
+
 void SlotGrid::layout (bool snap)
 {
     const auto a = activeSlots();
     const int count = (int) a.size() + 1;
+    const int rows = rowsFor (count);
+    if (rows != lastRows)
+    {
+        const bool notify = lastRows != 0;
+        lastRows = rows;
+        if (notify && onRowsChanged) onRowsChanged (rows);
+    }
     for (size_t i = 0; i < a.size(); ++i)
     {
         a[i]->target = cell ((int) i, count);

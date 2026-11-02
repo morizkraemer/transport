@@ -24,6 +24,9 @@ public:
 
     std::function<void (int slotIndex)> onBrowseRequested;   // -1 = add new
     std::function<void()> onChanged;
+    std::function<void (int rows)> onRowsChanged;   // fired when adding/removing changes the number of rows
+
+    int rowsFor (int itemCount) const;
 
     void updateFrame (const AnalysisFrame& f, float dt);
     void animate (float dt) override;
@@ -48,7 +51,7 @@ private:
 
     std::vector<std::unique_ptr<Slot>> slots;
     std::unique_ptr<AddTile> addTile;
-    int columns = 3;
+    int columns = 3, lastRows = 0;
     Slot* dragging = nullptr;
 };
 } // namespace tp

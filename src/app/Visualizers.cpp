@@ -275,7 +275,7 @@ public:
 
         const float dash[] = { 3.0f, 3.0f };
         g.setFont (theme::font (9.5f));
-        for (int db = 0; db >= (int) floorDb; db -= 18)
+        for (int db = 0; db >= (int) floorDb; db -= (area.getHeight() < 110.0f ? 36 : 18))
         {
             const float y = area.getY() + area.getHeight() * ((float) db / floorDb);
             g.setColour (Colour (0xff666666));
@@ -358,6 +358,11 @@ public:
     void paint (juce::Graphics& g) override
     {
         auto area = getLocalBounds().toFloat().reduced (14, 12);
+        if (area.getHeight() < 150.0f)
+        {
+            paintCompact (g, area);
+            return;
+        }
         drawLabel (g, utf8 ("LOUDNESS  \xc2\xb7  EBU R128"), area.removeFromTop (14), juce::Justification::centredLeft, theme::label, 10.0f);
         area.removeFromTop (8);
 
@@ -433,6 +438,29 @@ public:
     }
 
 private:
+    void paintCompact (juce::Graphics& g, Rectangle<float> area)
+    {
+        auto bars = area.removeFromBottom (8);
+        area.removeFromBottom (6);
+        const float target = (-14.0f + 48.0f) / 48.0f;
+        g.setColour (Colour (0xff444444));
+        g.fillRect (bars);
+        g.setColour (Colour (0xffe2e2e2));
+        g.fillRect (bars.withWidth (bars.getWidth() * juce::jmin (shortBar.current, target)));
+        if (shortBar.current > target)
+        {
+            g.setColour (theme::accent);
+            g.fillRect (Rectangle<float>::leftTopRightBottom (bars.getX() + bars.getWidth() * target, bars.getY(), bars.getX() + bars.getWidth() * shortBar.current, bars.getBottom()));
+        }
+
+        auto top = area.removeFromTop (14);
+        drawLabel (g, "LUFS integrated", top, juce::Justification::centredLeft, Colour (0xffcfcfcf), 10.0f);
+        drawLabel (g, "M " + formatDb (momentary) + "   S " + formatDb (shortTerm), top, juce::Justification::centredRight, Colour (0xffcfcfcf), 10.0f);
+        g.setColour (theme::text);
+        g.setFont (theme::mono (juce::jlimit (14.0f, 30.0f, area.getHeight() * 0.7f)));
+        g.drawText (formatDb (integrated), area, juce::Justification::centredLeft, false);
+    }
+
     Smoothed momentaryBar, shortBar;
     float integrated = kSilenceDb, momentary = kSilenceDb, shortTerm = kSilenceDb, maxPeak = kSilenceDb;
     float textTimer = 1.0f, historyTimer = 0.0f;

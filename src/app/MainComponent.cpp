@@ -17,7 +17,7 @@ MainComponent::MainComponent (bool isHeadless)
     juce::PropertiesFile::Options opts;
     opts.applicationName = "Transport";
     opts.filenameSuffix = ".settings";
-    opts.folderName = "Transport";
+    opts.folderName = configFolder();
     opts.osxLibrarySubFolder = "Application Support";
     properties.setStorageParameters (opts);
     auto* settings = properties.getUserSettings();
@@ -57,6 +57,7 @@ MainComponent::MainComponent (bool isHeadless)
     // ---- slots
     slotGrid.onBrowseRequested = [this] (int index) { browser.open (index, slotGrid.getIds()); };
     slotGrid.onChanged = [this] { saveSettings(); };
+    slotGrid.onRowsChanged = [this] (int rows) { growForRows (rows); };
     browser.onPick = [this] (int index, const juce::String& id)
     {
         if (index < 0) slotGrid.addVisualizer (id);
@@ -548,6 +549,25 @@ void MainComponent::setCompact (bool c)
     windowHeight.target = (float) (compact ? kCompactHeight : juce::jmax (420, expandedHeight));
     animatingHeight = true;
     refreshQuickState();
+}
+
+void MainComponent::growForRows (int rows)
+{
+    auto* top = getTopLevelComponent();
+    if (top == nullptr || compact || headless) return;
+
+    const int wanted = kCompactHeight + 14 + rows * 200 + (rows - 1) * 8;
+    if (getHeight() >= wanted) return;
+
+    int available = wanted;
+    if (auto* display = juce::Desktop::getInstance().getDisplays().getDisplayForRect (top->getScreenBounds()))
+        available = display->userArea.getBottom() - top->getScreenY() - (top->getHeight() - getHeight());
+
+    const int target = juce::jmin (wanted, available);
+    if (target <= getHeight()) return;
+    windowHeight.snap ((float) getHeight());
+    windowHeight.target = (float) target;
+    animatingHeight = true;
 }
 
 void MainComponent::saveSnapshot()
