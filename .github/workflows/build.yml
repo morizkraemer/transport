@@ -3,6 +3,7 @@ name: Build
 on:
   push:
     branches: [main]
+    tags: ['v*']
   pull_request:
   workflow_dispatch:
 
@@ -94,26 +95,38 @@ jobs:
           if-no-files-found: ignore
 
   release:
-    name: Publish "latest" release
+    name: Publish release
     needs: build
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v4
         with:
           pattern: Transport-*
           path: dist
           merge-multiple: true
 
-      - name: Replace the latest release
+      - name: Versioned release (tag push)
+        if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
         run: |
-          ls -la dist
+          TAG="${GITHUB_REF_NAME}"
+          NOTES=".github/release-notes/${TAG}.md"
+          [ -f "$NOTES" ] || { echo "Automatic build of ${TAG}." > /tmp/notes.md; NOTES=/tmp/notes.md; }
+          gh release delete "$TAG" --yes || true
+          gh release create "$TAG" dist/* --verify-tag --title "Transport ${TAG}" --notes-file "$NOTES" --latest
+
+      - name: Rolling "latest" build (main)
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
           gh release delete latest --yes --cleanup-tag || true
           gh release create latest dist/* \
             --target "${{ github.sha }}" \
-            --prerelease \
-            --title "Transport (latest build)" \
-            --notes "Automatic build of ${{ github.sha }}. Windows: run the .exe. macOS: unzip, then right-click Transport.app > Open the first time (the app is not notarised yet)."
+            --prerelease --latest=false \
+            --title "Transport (development build)" \
+            --notes "Automatic build of ${{ github.sha }} from main. For the stable version use the newest vX.Y.Z release."
