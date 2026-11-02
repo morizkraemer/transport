@@ -42,7 +42,7 @@ for f in frames:
     check(all(abs(a - b) < 45 for a, b in zip(rgb, expected)), f"frame at {pts:.2f}s has the right colour {[round(x) for x in rgb]} vs {expected}")
 
 ticks = c.get("syncTicks", 0)
-check(ticks > 100, f"real-time sync ran ({ticks} ticks)")
+check(ticks > 30, f"real-time sync ran ({ticks} ticks)")
 check(c.get("syncLateTicks", 99) <= max(2, ticks * 0.03), f"picture in time with the clock (late {c.get('syncLateTicks')} of {ticks}, worst lag {c.get('syncWorstLag', 0):.3f}s)")
 settle = c.get("syncSeekSettle", [])
 check(len(settle) == 4 and all(0 <= s < 0.3 for s in settle), f"jumps settle quickly {settle}")

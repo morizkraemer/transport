@@ -122,12 +122,13 @@ bool seekReader (IMFSourceReader* reader, double seconds)
     return SUCCEEDED (hr);
 }
 
-/** MF_MT_VIDEO_ROTATION is counter-clockwise; we want clockwise degrees. */
+/** Clockwise degrees to show the picture upright. MF_MT_VIDEO_ROTATION already holds exactly that in
+    practice (checked in CI against FFmpeg and AVFoundation with a rotated clip). */
 int rotationOf (IMFMediaType* type)
 {
-    UINT32 ccw = 0;
-    if (FAILED (type->GetUINT32 (MF_MT_VIDEO_ROTATION, &ccw))) return 0;
-    return (int) ((360 - (ccw % 360)) % 360);
+    UINT32 degrees = 0;
+    if (FAILED (type->GetUINT32 (MF_MT_VIDEO_ROTATION, &degrees))) return 0;
+    return (int) (degrees % 360);
 }
 
 //==============================================================================
