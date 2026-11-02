@@ -360,6 +360,18 @@ int runProbe (const juce::StringArray& args)
     }
     obj->setProperty ("frames", frames);
 
+    // decoding straight to the on-screen size
+    if (auto dec = media::openVideo (in))
+    {
+        const bool restart = dec->setOutputLimit (160, 90);
+        dec->seek (0.5);
+        media::FrameBuffer fb;
+        double pts = 0.0;
+        if (dec->read (fb, pts))
+            obj->setProperty ("limited", juce::Array<juce::var> { fb.width, fb.height, restart });
+    }
+    obj->setProperty ("platform", juce::SystemStats::getOperatingSystemName());
+
     // real-time playback against a simulated clock, with jumps back and forward
     if (info.hasVideo)
     {

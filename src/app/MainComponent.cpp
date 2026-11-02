@@ -265,11 +265,6 @@ MainComponent::MainComponent (bool isHeadless)
         if (last.existsAsFile())
             openFile (last, false);
 
-       #if JUCE_MAC
-        openGL.setComponentPaintingEnabled (true);
-        openGL.setContinuousRepainting (false);
-        openGL.attachTo (*this);
-       #endif
         vblank = juce::VBlankAttachment (this, [this] (double ts) { onVBlank (ts); });
 
         if (defaultplayer::isSupported() && settings->getValue ("defaultPrompt") != "never")
@@ -290,7 +285,6 @@ MainComponent::~MainComponent()
     video.close();
     saveSettings();
     vblank = {};
-    openGL.detach();
 }
 
 //==============================================================================
@@ -505,6 +499,16 @@ void MainComponent::tickFrame (float dt)
 
     if (videoLoaded)
     {
+        // decode at the size the picture is shown (after the size has settled for a moment)
+        const float scale = (float) juce::Component::getApproximateScaleFactorForComponent (&videoView);
+        const auto px = juce::Point<int> (juce::roundToInt ((float) videoView.getWidth() * scale), juce::roundToInt ((float) videoView.getHeight() * scale));
+        if (px != videoPixels) { videoPixels = px; videoPixelsAge = 0.0f; }
+        else if (videoPixelsAge >= 0.0f && (videoPixelsAge += dt) > 0.25f)
+        {
+            videoPixelsAge = -1.0f;
+            video.setDisplaySize (px.x, px.y);
+        }
+
         if (video.sync (engine.getAudiblePosition()))
             videoView.pictureChanged();
         videoView.setTransport (engine.getSmoothPosition(), engine.getLength(), engine.isPlaying());

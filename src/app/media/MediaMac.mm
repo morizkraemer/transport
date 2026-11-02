@@ -188,11 +188,27 @@ public:
             if (r.asset == nil) return false;
             r.track = firstTrack (r.asset, AVMediaTypeVideo);
             if (r.track == nil) return false;
-            r.settings = @{ (id) kCVPixelBufferPixelFormatTypeKey: @(kCVPixelFormatType_32BGRA) };
+            if (r.track.formatDescriptions.count > 0)
+            {
+                const auto dims = CMVideoFormatDescriptionGetDimensions ((__bridge CMVideoFormatDescriptionRef) r.track.formatDescriptions.firstObject);
+                codedW = dims.width;
+                codedH = dims.height;
+            }
+            updateSettings();
             const float fps = r.track.nominalFrameRate;
             frameDur = fps > 0.0f ? 1.0 / fps : 1.0 / 30.0;
             return r.start (0.0);
         }
+    }
+
+    bool setOutputLimit (int w, int h) override
+    {
+        const auto before = limitedSize (codedW, codedH, limitW, limitH);
+        limitW = w;
+        limitH = h;
+        if (limitedSize (codedW, codedH, limitW, limitH) == before) return false;
+        updateSettings();
+        return true;   // the reader has to restart with the new size
     }
 
     bool seek (double s) override
@@ -228,6 +244,18 @@ public:
     }
 
 private:
+    void updateSettings()
+    {
+        NSMutableDictionary* s = [@{ (id) kCVPixelBufferPixelFormatTypeKey: @(kCVPixelFormatType_32BGRA) } mutableCopy];
+        const auto size = limitedSize (codedW, codedH, limitW, limitH);
+        if (codedW > 0 && codedH > 0 && (size.x != codedW || size.y != codedH))
+        {
+            s[(id) kCVPixelBufferWidthKey] = @(size.x);
+            s[(id) kCVPixelBufferHeightKey] = @(size.y);
+        }
+        r.settings = s;
+    }
+
     CMSampleBufferRef nextFrame()
     {
         for (int guard = 0; guard < 100; ++guard)
@@ -266,6 +294,7 @@ private:
     TrackReader r;
     CMSampleBufferRef held = nullptr;
     double frameDur = 1.0 / 30.0;
+    int codedW = 0, codedH = 0, limitW = 0, limitH = 0;
 };
 } // namespace
 

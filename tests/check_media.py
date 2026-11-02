@@ -41,6 +41,12 @@ for f in frames:
     expected = (255, 0, 0) if pts < 0.999 else (0, 255, 0) if pts < 1.999 else (0, 0, 255)
     check(all(abs(a - b) < 45 for a, b in zip(rgb, expected)), f"frame at {pts:.2f}s has the right colour {[round(x) for x in rgb]} vs {expected}")
 
+limited = c.get("limited")
+if "Windows" in str(c.get("platform", "")):
+    check(limited is not None, f"decoding with a size limit works (Windows draws full size) {limited}")
+else:
+    check(limited is not None and limited[0] == 160 and limited[1] == 90, f"decoded at the on-screen size 160x90 (got {limited})")
+
 ticks = c.get("syncTicks", 0)
 check(ticks > 30, f"real-time sync ran ({ticks} ticks)")
 check(c.get("syncLateTicks", 99) <= max(2, ticks * 0.03), f"picture in time with the clock (late {c.get('syncLateTicks')} of {ticks}, worst lag {c.get('syncWorstLag', 0):.3f}s)")

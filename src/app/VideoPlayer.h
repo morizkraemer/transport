@@ -22,6 +22,9 @@ public:
 
     /** UI thread, once per display frame. Returns true when the picture changed. */
     bool sync (double audibleTime);
+    /** How many pixels the picture covers on screen; frames are decoded at (at most) that size. */
+    void setDisplaySize (int pixelWidth, int pixelHeight);
+
     /** Waits until the picture for `time` has been decoded (snapshots, tests). */
     bool syncBlocking (double time, int timeoutMs);
     const juce::Image& picture() const     { return image; }
@@ -57,6 +60,9 @@ private:
     // UI side
     juce::Image image;
     double shownPts = -1.0;
+
+    std::atomic<int> wantW { 0 }, wantH { 0 };
+    int appliedW = -1, appliedH = -1;   // decoder thread
 
     static constexpr size_t kQueueLength = 6;
 };

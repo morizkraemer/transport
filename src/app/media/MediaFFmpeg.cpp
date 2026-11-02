@@ -238,19 +238,23 @@ public:
 
         auto* f = d.frame;
         pts = d.framePts();
+        const auto size = limitedSize (f->width, f->height, limitW, limitH);
         sws = sws_getCachedContext (sws, f->width, f->height, (AVPixelFormat) f->format,
-                                    f->width, f->height, AV_PIX_FMT_BGRA, SWS_BILINEAR, nullptr, nullptr, nullptr);
+                                    size.x, size.y, AV_PIX_FMT_BGRA, SWS_BILINEAR, nullptr, nullptr, nullptr);
         if (sws == nullptr) return false;
-        if (out.width != f->width || out.height != f->height) out.allocate (f->width, f->height);
+        if (out.width != size.x || out.height != size.y) out.allocate (size.x, size.y);
         uint8_t* dst[] = { out.pixels.data() };
         const int dstStride[] = { out.stride };
         sws_scale (sws, f->data, f->linesize, 0, f->height, dst, dstStride);
         return true;
     }
 
+    bool setOutputLimit (int w, int h) override { limitW = w; limitH = h; return false; }   // applies to the next frame
+
 private:
     Demux d;
     SwsContext* sws = nullptr;
+    int limitW = 0, limitH = 0;
     double frameDur = 1.0 / 30.0;
     bool held = false;
 };

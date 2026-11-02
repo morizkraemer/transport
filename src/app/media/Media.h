@@ -56,7 +56,24 @@ public:
     virtual bool seek (double seconds) = 0;
     /** Decodes the next picture into `into` (reusing its memory). False at the end. */
     virtual bool read (FrameBuffer& into, double& pts) = 0;
+    /** Decode no larger than this (picture orientation, pixels; 0 = full size), so drawing is a cheap
+        1:1 copy. Returns true if the decoder must seek for it to take effect. */
+    virtual bool setOutputLimit (int maxWidth, int maxHeight) { juce::ignoreUnused (maxWidth, maxHeight); return false; }
 };
+
+/** Output size for a picture of w x h under a limit: aspect kept, never enlarged, even numbers. */
+struct PixelSize
+{
+    int x = 0, y = 0;
+    bool operator== (const PixelSize& o) const { return x == o.x && y == o.y; }
+};
+
+inline PixelSize limitedSize (int w, int h, int maxW, int maxH)
+{
+    if (maxW <= 0 || maxH <= 0 || w <= 0 || h <= 0 || (w <= maxW && h <= maxH)) return { w, h };
+    const double s = juce::jmin ((double) maxW / w, (double) maxH / h);
+    return { juce::jmax (2, (int) std::lround (w * s / 2.0) * 2), juce::jmax (2, (int) std::lround (h * s / 2.0) * 2) };
+}
 
 /** True where a platform decoder is available. */
 bool isSupported();

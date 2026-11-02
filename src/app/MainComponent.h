@@ -1,7 +1,6 @@
 #pragma once
 
 #include <juce_audio_utils/juce_audio_utils.h>
-#include <juce_opengl/juce_opengl.h>
 
 #include "core/Analyzer.h"
 #include "AudioEngine.h"
@@ -105,6 +104,8 @@ private:
     VideoView videoView { video };
     bool videoLoaded = false, showVideo = true, videoFullscreen = false;
     Smoothed videoMix;
+    juce::Point<int> videoPixels;
+    float videoPixelsAge = 0.0f;
     int coverToken = 0;
     juce::TooltipWindow tooltips { this, 700 };
 
@@ -137,7 +138,6 @@ private:
     float toastTime = 0.0f;
 
     std::unique_ptr<juce::FileChooser> chooser;
-    juce::OpenGLContext openGL;
     juce::VBlankAttachment vblank;
     double lastTimestamp = 0.0;
 };

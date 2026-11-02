@@ -38,7 +38,8 @@ void VideoView::setTrack (const juce::String& t, const juce::String& a)
 
 void VideoView::setTransport (double pos, double len, bool isPlaying)
 {
-    const bool changed = isPlaying != playing || (chrome.current > 0.01f && std::abs (pos - position) > 0.02);
+    // the time only shows in the full screen overlay; don't repaint the picture for it otherwise
+    const bool changed = isPlaying != playing || (fullscreen && chrome.current > 0.01f && std::abs (pos - position) > 0.05);
     position = pos;
     length = len;
     playing = isPlaying;

@@ -46,6 +46,21 @@ void VideoPlayer::close()
     streamInfo = {};
 }
 
+void VideoPlayer::setDisplaySize (int w, int h)
+{
+    // picture orientation; a little headroom, in steps so small resizes don't restart the decoder
+    if (streamInfo.rotation == 90 || streamInfo.rotation == 270) std::swap (w, h);
+    auto step = [] (int v) { return v <= 0 ? 0 : ((int) (v * 1.1) + 127) / 128 * 128; };
+    w = step (w);
+    h = step (h);
+    if (w != wantW.load() || h != wantH.load())
+    {
+        wantW = w;
+        wantH = h;
+        wake.signal();
+    }
+}
+
 void VideoPlayer::requestSeek (double time)
 {
     // caller holds the lock
@@ -140,6 +155,25 @@ void VideoPlayer::run()
         bool doSeek = false;
         double target = 0.0;
         std::unique_ptr<Frame> f;
+
+        if (const int w = wantW.load(), h = wantH.load(); w != appliedW || h != appliedH)
+        {
+            appliedW = w;
+            appliedH = h;
+            if (decoder->setOutputLimit (w, h))
+            {
+                // restart where we are, at the new size
+                const juce::ScopedLock sl (lock);
+                if (! seekPending)
+                {
+                    seekPending = true;
+                    awaitingFirst = true;
+                    freshSeek = true;
+                    seekTarget = queue.empty() ? juce::jmax (0.0, lastQueuedPts) : queue.front()->pts;
+                }
+            }
+        }
+
         {
             const juce::ScopedLock sl (lock);
             if (seekPending)
@@ -244,7 +278,8 @@ void VideoPlayer::drawUpright (juce::Graphics& g, const juce::Image& picture, ju
                        .scaled (W / (float) picture.getWidth(), H / (float) picture.getHeight())
                        .rotated (juce::degreesToRadians ((float) info.rotation))
                        .translated (r.getCentre());
-    g.setImageResamplingQuality (juce::Graphics::highResamplingQuality);
+    // frames arrive at about the size they are drawn, so medium quality is enough and much cheaper
+    g.setImageResamplingQuality (juce::Graphics::mediumResamplingQuality);
     g.drawImageTransformed (picture, t);
 }
 } // namespace tp

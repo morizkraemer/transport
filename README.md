@@ -76,7 +76,7 @@ file → decoder (read-ahead thread) → audio callback ─┬→ volume → out
 
 - The audio callback never locks or allocates; monitoring (mono, swap, solo…) runs there, then a copy goes into a lock-free FIFO.
 - `src/core` is pure DSP (FFT, K-weighted loudness with gating, correlation, polar field) and is unit-tested headlessly.
-- The UI is driven by the display's vertical blank (`VBlankAttachment`), so every animation — needle springs, meter ballistics, slot layout, play/pause morph — is frame-rate independent and in sync with the screen. On macOS the UI is rendered through OpenGL; on Windows JUCE uses Direct2D.
+- The UI is driven by the display's vertical blank (`VBlankAttachment`), so every animation — needle springs, meter ballistics, slot layout, play/pause morph — is frame-rate independent and in sync with the screen. JUCE 8 renders with CoreGraphics on macOS and Direct2D on Windows. Video frames are decoded at the size they are shown (the hardware decoder scales on macOS), so drawing them is a plain copy.
 - Video: `src/app/media` wraps the platform decoder (Media Foundation / AVFoundation / FFmpeg). The sound is exposed as a normal `AudioFormatReader`, so the audio engine is the clock; `VideoPlayer` decodes pictures a few frames ahead on its own thread and shows the one matching the audible position (output latency compensated).
 - Plugins implement `Visualizer::update (const AnalysisFrame&, float dt)` + `paint()`. Add one to the registry in `src/app/Visualizers.cpp`.
 
