@@ -5,20 +5,37 @@
 
 namespace tp
 {
-/** Bar waveform with a glowing playhead, hover time readout, drag-to-seek and A-B region. */
+/** The waveform strip: several looks, glowing playhead, hover time readout, drag-to-seek, A-B region.
+    A background job splits the track into low/mid/high bands for the colour-coded styles. */
 class WaveformView final : public juce::Component, public Animated, private juce::ChangeListener
 {
 public:
-    explicit WaveformView (juce::AudioThumbnail& thumbnail);
+    enum class Style { bars, mirror, reflection, line, spectral, threeBand };
+    static const juce::StringArray& styleNames();
+    static const juce::StringArray& styleIds();
+
+    struct Bin { float peak = 0, low = 0, mid = 0, high = 0; };
+    using BandData = std::vector<Bin>;
+
+    WaveformView (juce::AudioThumbnail& thumbnail, juce::AudioFormatManager& formats);
     ~WaveformView() override;
 
-    void trackChanged();                       // restart the reveal animation
+    void trackChanged (const juce::File& file);   // restarts the reveal animation and the band analysis
     void setPosition (double seconds, double length);
-    void setLoop (double a, double b);         // negative = unset
+    void setLoop (double a, double b);             // negative = unset
     void refreshBars();
+
+    void setStyle (Style s, bool animate = true);
+    Style getStyle() const { return style; }
+
+    /** Splits a file into peak + low/mid/high energy per bin. Blocking; used by the background job and tests. */
+    static std::shared_ptr<const BandData> analyse (const juce::File&, juce::AudioFormatManager&, const std::function<bool()>& shouldStop);
+    void setBandData (std::shared_ptr<const BandData> data);
+    bool hasBandData() const { return bandData != nullptr; }
 
     std::function<void (double seconds)> onSeek;
     std::function<void()> onEmptyClick;
+    std::function<void (Style)> onStyleChanged;
 
     void animate (float dt) override;
     void paint (juce::Graphics&) override;
@@ -31,17 +48,27 @@ public:
     void mouseUp (const juce::MouseEvent&) override;
 
 private:
+    class AnalysisJob;
+
     void changeListenerCallback (juce::ChangeBroadcaster*) override { refreshBars(); }
     juce::Rectangle<float> barArea() const { return getLocalBounds().toFloat().reduced (14, 6); }
     double xToTime (float x) const;
     float timeToX (double t) const;
+    void paintStyle (juce::Graphics&, Style, float alpha, float playX);
+    void showStyleMenu();
 
     juce::AudioThumbnail& thumb;
-    std::vector<float> bars;
+    juce::AudioFormatManager& formats;
+    juce::ThreadPool pool { 1 };
+    int generation = 0;
+    std::shared_ptr<const BandData> bandData;
+
+    std::vector<Bin> bars;
     double length = 0.0, position = 0.0, loopA = -1.0, loopB = -1.0;
-    Smoothed shownPos;          // seconds, glides on seeks
-    float reveal = 1.0f;        // 0..1 entrance animation
-    Smoothed hover, loopAlpha, dragging;
+    Smoothed shownPos;
+    float reveal = 1.0f;
+    Smoothed hover, loopAlpha, dragging, styleFade, bandFade;
+    Style style = Style::bars, previousStyle = Style::bars;
     float hoverX = 0.0f;
     bool scrubbing = false;
 };

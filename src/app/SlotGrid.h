@@ -12,8 +12,13 @@ public:
     SlotGrid();
     ~SlotGrid() override;
 
-    void setIds (const juce::StringArray& ids);
+    void setIds (const juce::StringArray& ids, const juce::Array<juce::var>& states = {});
     juce::StringArray getIds() const;
+    juce::Array<juce::var> getStates() const;
+
+    /** Effects of all active slots, in slot order (the audio chain). */
+    std::vector<std::shared_ptr<EffectProcessor>> effectChain() const;
+    void setCover (const juce::Image& cover);
 
     void addVisualizer (const juce::String& id);
     void replaceVisualizer (int index, const juce::String& id);
@@ -24,7 +29,8 @@ public:
 
     std::function<void (int slotIndex)> onBrowseRequested;   // -1 = add new
     std::function<void()> onChanged;
-    std::function<void (int rows)> onRowsChanged;   // fired when adding/removing changes the number of rows
+    std::function<void (int rows)> onRowsChanged;
+    std::function<void()> onStateChanged;   // a plugin setting changed (save, no relayout)   // fired when adding/removing changes the number of rows
 
     int rowsFor (int itemCount) const;
 
@@ -52,6 +58,7 @@ private:
     std::vector<std::unique_ptr<Slot>> slots;
     std::unique_ptr<AddTile> addTile;
     int columns = 3, lastRows = 0;
+    juce::Image cover;
     Slot* dragging = nullptr;
 };
 } // namespace tp

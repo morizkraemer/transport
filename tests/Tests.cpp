@@ -3,6 +3,10 @@
 #include "core/Analyzer.h"
 #include "core/LoudnessMeter.h"
 #include "core/StereoFifo.h"
+#include "core/Effects.h"
+#include "core/KeyDetector.h"
+#include "core/TempoTracker.h"
+#include "core/TruePeak.h"
 
 #include <cstdio>
 #include <functional>
@@ -131,6 +135,163 @@ void testFifo()
         same = ol[(size_t) i] == (float) i && orr[(size_t) i] == (float) -i;
     check (same, "FIFO wrap-around keeps samples intact", got, 700);
 }
+
+std::vector<float> beatLoop (double sr, double bpm, double seconds)
+{
+    const auto n = (size_t) (sr * seconds);
+    std::vector<float> v (n);
+    const double beat = 60.0 / bpm, twoPi = juce::MathConstants<double>::twoPi;
+    double phase = 0.0;
+    juce::Random rng (7);
+    for (size_t i = 0; i < n; ++i)
+    {
+        const double t = (double) i / sr, inBeat = std::fmod (t, beat), off = std::fmod (t + beat * 0.5, beat);
+        phase += twoPi * (45.0 + 95.0 * std::exp (-inBeat * 28.0)) / sr;
+        const double kick = 0.8 * std::sin (phase) * std::exp (-inBeat * 7.0);
+        const double hat = (rng.nextDouble() * 2.0 - 1.0) * 0.12 * std::exp (-off * 45.0);
+        const double pad = 0.05 * std::sin (twoPi * 220.0 * t);
+        v[i] = (float) (kick + hat + pad);
+    }
+    return v;
+}
+
+void testTempo()
+{
+    for (double bpm : { 124.0, 92.0, 140.0 })
+    {
+        const double sr = 44100.0;
+        auto s = beatLoop (sr, bpm, 14.0);
+        tp::TempoTracker t;
+        t.prepare (sr);
+        t.process (s.data(), s.data(), (int) s.size());
+        const auto label = "Tempo of a " + juce::String (bpm, 0) + " BPM loop";
+        check (std::abs (t.bpm() - bpm) < 1.0, label.toRawUTF8(), t.bpm(), bpm);
+    }
+}
+
+void chords (std::vector<float>& out, double sr, std::initializer_list<std::initializer_list<int>> progression, double secondsEach)
+{
+    const double twoPi = juce::MathConstants<double>::twoPi;
+    for (auto& chord : progression)
+    {
+        const auto n = (size_t) (sr * secondsEach);
+        const auto start = out.size();
+        out.resize (start + n, 0.0f);
+        for (int midi : chord)
+        {
+            const double f = 440.0 * std::pow (2.0, (midi - 69) / 12.0);
+            for (size_t i = 0; i < n; ++i)
+                for (int h = 1; h <= 4; ++h)
+                    out[start + i] += (float) (0.08 / h * std::sin (twoPi * f * h * (double) i / sr));
+        }
+    }
+}
+
+void testKey()
+{
+    const double sr = 44100.0;
+    struct Case { const char* name; int expected; std::initializer_list<std::initializer_list<int>> prog; };
+    // C major: C F G C (with a bass note)   A minor: Am Dm E Am
+    const Case cases[] = {
+        { "Key of C-F-G-C progression is C major", 0,  { { 48, 60, 64, 67 }, { 53, 60, 65, 69 }, { 55, 59, 62, 67 }, { 48, 60, 64, 67 } } },
+        { "Key of Am-Dm-E-Am progression is A minor", 21, { { 45, 57, 60, 64 }, { 50, 57, 62, 65 }, { 52, 56, 59, 64 }, { 45, 57, 60, 64 } } },
+        { "Key of G-C-D-G progression is G major", 7, { { 43, 59, 62, 67 }, { 48, 60, 64, 67 }, { 50, 57, 62, 66 }, { 43, 59, 62, 67 } } },
+        { "Key of Em-Am-B-Em progression is E minor", 16, { { 40, 55, 59, 64 }, { 45, 57, 60, 64 }, { 47, 54, 59, 63 }, { 40, 55, 59, 64 } } },
+    };
+
+    for (auto& c : cases)
+    {
+        std::vector<float> s;
+        chords (s, sr, c.prog, 2.0);
+        tp::Analyzer a; a.prepare (sr);
+        tp::AnalysisFrame f;
+        feed (a, s, s, f);
+        check (f.key == c.expected, (juce::String (c.name) + " (got " + tp::KeyDetector::keyName (f.key) + ")").toRawUTF8(), f.key, c.expected);
+    }
+    check (tp::KeyDetector::camelot (21) == "8A" && tp::KeyDetector::camelot (7) == "9B", "Camelot codes (Am = 8A, G = 9B)", 1, 1);
+}
+
+void testTruePeak()
+{
+    // fs/4 sine at 0 dBFS, phase 45 deg: samples only reach -3 dB, the true peak is 0 dB
+    const double sr = 48000.0;
+    auto s = sine (sr, sr / 4.0, 0.0, 0.2, juce::MathConstants<double>::pi / 4.0);
+    tp::TruePeak tpk;
+    float samplePeak = 0.0f, truePeak = 0.0f;
+    for (auto x : s) { samplePeak = std::max (samplePeak, std::abs (x)); truePeak = std::max (truePeak, tpk.process (x)); }
+    check (std::abs (20.0f * std::log10 (truePeak)) < 0.6f, "True peak finds the inter-sample peak (0 dB)", 20.0 * std::log10 (truePeak), 0.0);
+    check (20.0f * std::log10 (samplePeak) < -2.5f, "...while the sample peak reads about -3 dB", 20.0 * std::log10 (samplePeak), -3.0);
+}
+
+void testWidth()
+{
+    const double sr = 44100.0;
+    tp::AnalysisFrame f;
+    {
+        tp::Analyzer a; a.prepare (sr);
+        auto s = sine (sr, 1000.0, -12.0, 0.5);
+        feed (a, s, s, f);
+        check (f.bandWidth[2] < 0.02f, "Mono 1 kHz -> mid band width 0", f.bandWidth[2], 0.0);
+    }
+    {
+        tp::Analyzer a; a.prepare (sr);
+        auto s = sine (sr, 1000.0, -12.0, 0.5);
+        std::vector<float> silent (s.size(), 0.0f);
+        feed (a, s, silent, f);
+        check (std::abs (f.bandWidth[2] - 0.5f) < 0.03f, "Left-only 1 kHz -> mid band width 0.5", f.bandWidth[2], 0.5);
+    }
+}
+
+float peakDbOf (const std::vector<float>& v, size_t from)
+{
+    float p = 0.0f;
+    for (size_t i = from; i < v.size(); ++i) p = std::max (p, std::abs (v[i]));
+    return 20.0f * std::log10 (std::max (p, 1.0e-9f));
+}
+
+void runEffect (tp::EffectProcessor& fx, std::vector<float>& l, std::vector<float>& r)
+{
+    for (size_t i = 0; i < l.size(); i += 512)
+    {
+        const int n = (int) std::min<size_t> (512, l.size() - i);
+        fx.process (l.data() + i, r.data() + i, n);
+    }
+}
+
+void testEffects()
+{
+    const double sr = 48000.0;
+    {
+        tp::Equalizer eq;
+        eq.bands[2].freq = 1000.0f; eq.bands[2].gainDb = 6.0f; eq.bands[2].q = 1.0f;
+        eq.prepare (sr);
+        auto l = sine (sr, 1000.0, -12.0, 1.0), r = l;
+        runEffect (eq, l, r);
+        check (std::abs (peakDbOf (l, l.size() / 2) + 6.0f) < 0.3f, "EQ +6 dB at 1 kHz boosts a 1 kHz sine by 6 dB", peakDbOf (l, l.size() / 2), -6.0);
+        auto l2 = sine (sr, 100.0, -12.0, 1.0), r2 = l2;
+        runEffect (eq, l2, r2);
+        check (std::abs (peakDbOf (l2, l2.size() / 2) + 12.0f) < 0.3f, "...and leaves 100 Hz alone", peakDbOf (l2, l2.size() / 2), -12.0);
+        check (std::abs (eq.responseDb (1000.0f) - 6.0f) < 0.1f, "EQ curve reads +6 dB at 1 kHz", eq.responseDb (1000.0f), 6.0);
+    }
+    {
+        tp::Compressor c;
+        c.thresholdDb = -20.0f; c.ratio = 4.0f; c.kneeDb = 0.0f; c.attackMs = 1.0f; c.releaseMs = 100.0f;
+        c.prepare (sr);
+        auto l = sine (sr, 1000.0, -6.0, 1.0), r = l;
+        runEffect (c, l, r);
+        // -6 dB peak, 14 dB over the threshold at 4:1 -> -20 + 3.5 = -16.5 dB
+        check (std::abs (peakDbOf (l, l.size() / 2) + 16.5f) < 0.8f, "Compressor 4:1 at -20 dB: -6 dB in -> -16.5 dB out", peakDbOf (l, l.size() / 2), -16.5);
+    }
+    {
+        tp::Limiter lim;
+        lim.driveDb = 9.0f; lim.ceilingDb = -1.0f; lim.releaseMs = 50.0f;
+        lim.prepare (sr);
+        auto l = beatLoop (sr, 124.0, 4.0), r = l;
+        runEffect (lim, l, r);
+        const float out = peakDbOf (l, 0);
+        check (out <= -0.999f && out > -1.6f, "Limiter +9 dB drive never exceeds the -1 dB ceiling", out, -1.0);
+    }
+}
 } // namespace
 
 int main()
@@ -140,6 +301,11 @@ int main()
     testSpectrum();
     testStereo();
     testFifo();
+    testTempo();
+    testKey();
+    testTruePeak();
+    testWidth();
+    testEffects();
 
     std::printf ("\n%s (%d failure%s)\n", failures == 0 ? "ALL TESTS PASSED" : "TESTS FAILED", failures, failures == 1 ? "" : "s");
     return failures == 0 ? 0 : 1;

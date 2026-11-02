@@ -12,7 +12,7 @@ const juce::StringArray defaultSlots { "vu", "polar" };
 }
 
 MainComponent::MainComponent (bool isHeadless)
-    : headless (isHeadless), waveform (engine.thumbnail())
+    : headless (isHeadless), waveform (engine.thumbnail(), engine.formats())
 {
     juce::PropertiesFile::Options opts;
     opts.applicationName = "Transport";
@@ -53,10 +53,16 @@ MainComponent::MainComponent (bool isHeadless)
     // ---- waveform
     waveform.onSeek = [this] (double s) { engine.setPosition (s); };
     waveform.onEmptyClick = [this] { showOpenDialog(); };
+    waveform.onStyleChanged = [this] (WaveformView::Style) { saveSettings(); };
+    {
+        const int styleIndex = WaveformView::styleIds().indexOf (settings->getValue ("waveStyle", "bars"));
+        if (! headless && styleIndex >= 0) waveform.setStyle ((WaveformView::Style) styleIndex, false);
+    }
 
     // ---- slots
     slotGrid.onBrowseRequested = [this] (int index) { browser.open (index, slotGrid.getIds()); };
-    slotGrid.onChanged = [this] { saveSettings(); };
+    slotGrid.onChanged = [this] { engine.setEffectChain (slotGrid.effectChain()); saveSettings(); };
+    slotGrid.onStateChanged = [this] { settingsDirtyFor = 0.0f; };
     slotGrid.onRowsChanged = [this] (int rows) { growForRows (rows); };
     browser.onPick = [this] (int index, const juce::String& id)
     {
@@ -68,7 +74,15 @@ MainComponent::MainComponent (bool isHeadless)
     auto slotIds = juce::StringArray::fromTokens (headless ? defaultSlots.joinIntoString (",") : settings->getValue ("slots", defaultSlots.joinIntoString (",")), ",", "");
     slotIds.removeEmptyStrings();
     slotGrid.setColumns (headless ? 3 : settings->getIntValue ("columns", 3));
-    slotGrid.setIds (slotIds);
+    juce::Array<juce::var> slotStates;
+    if (! headless)
+    {
+        const auto parsed = juce::JSON::parse (settings->getValue ("slotStates", "[]"));   // keep the var alive while reading it
+        if (auto* arr = parsed.getArray())
+            slotStates = *arr;
+    }
+    slotGrid.setIds (slotIds, slotStates);
+    engine.setEffectChain (slotGrid.effectChain());
 
     quickColumns = juce::jlimit (2, 4, settings->getIntValue ("quickColumns", 2));
     const auto quickIds = juce::StringArray::fromTokens (settings->getValue ("quick", "monitor,playlist,addvis,dim"), ",", "");
@@ -137,7 +151,8 @@ bool MainComponent::openFile (const juce::File& file, bool autoplay)
     meta.add (juce::String ((double) d.fileSize / (1024.0 * 1024.0), 2) + " MB");
 
     header.setTrack (info.cover, info.displayName (file), meta);
-    waveform.trackChanged();
+    slotGrid.setCover (info.cover);
+    waveform.trackChanged (file);
     analyzer.resetTrack();
     loopA = loopB = -1.0;
     waveform.setLoop (loopA, loopB);
@@ -183,7 +198,17 @@ void MainComponent::tickFrame (float dt)
 
     // 2. analysis + plugins
     analyzer.computeFrame (frame, dt);
+    frame.positionSeconds = engine.getSmoothPosition();
+    frame.lengthSeconds = engine.getLength();
+    frame.playing = engine.isPlaying();
     slotGrid.updateFrame (frame, dt);
+    engine.collectGarbage();
+
+    if (settingsDirtyFor >= 0.0f && (settingsDirtyFor += dt) > 0.8f)
+    {
+        settingsDirtyFor = -1.0f;
+        saveSettings();
+    }
 
     // 3. transport bookkeeping
     const double pos = engine.getSmoothPosition();
@@ -347,7 +372,7 @@ void MainComponent::skip (int direction)
 
 void MainComponent::showMainMenu()
 {
-    juce::PopupMenu m, cols, quickGrid;
+    juce::PopupMenu m, cols, quickGrid, waveStyles;
     m.addItem (1, utf8 ("Open file\xe2\x80\xa6"), true, false);
     m.addSeparator();
     m.addItem (2, utf8 ("Add plugin\xe2\x80\xa6"));
@@ -355,6 +380,9 @@ void MainComponent::showMainMenu()
     m.addSubMenu ("Plugin columns", cols);
     for (int c = 2; c <= 4; ++c) quickGrid.addItem (200 + c, juce::String (c) + utf8 (" \xc3\x97 2"), true, c == quickColumns);
     m.addSubMenu ("Quick-access grid", quickGrid);
+    for (int i = 0; i < WaveformView::styleNames().size(); ++i)
+        waveStyles.addItem (300 + i, WaveformView::styleNames()[i], true, (int) waveform.getStyle() == i);
+    m.addSubMenu ("Waveform style", waveStyles);
     m.addItem (3, "Reset layout");
     m.addSeparator();
     m.addItem (4, utf8 ("Audio output\xe2\x80\xa6"));
@@ -378,6 +406,7 @@ void MainComponent::showMainMenu()
         else if (r == 6) juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::NoIcon, "Transport " JUCE_APPLICATION_VERSION_STRING,
                                                                  "A music player that shows you what you hear.\nBuilt with JUCE.");
         else if (r == 7) { if (self.onClose) self.onClose(); }
+        else if (r >= 300) { self.waveform.setStyle ((WaveformView::Style) (r - 300)); self.saveSettings(); }
         else if (r > 200) { self.quickColumns = r - 200; self.quick.resize ((size_t) self.quickColumns * 2, QuickAction::open); self.applyQuickActions(); self.saveSettings(); }
         else if (r > 100) self.slotGrid.setColumns (r - 100);
     });
@@ -608,6 +637,8 @@ void MainComponent::saveSettings()
     auto* s = properties.getUserSettings();
     s->setValue ("slots", slotGrid.getIds().joinIntoString (","));
     s->setValue ("columns", slotGrid.getColumns());
+    s->setValue ("waveStyle", WaveformView::styleIds()[(int) waveform.getStyle()]);
+    s->setValue ("slotStates", juce::JSON::toString (juce::var (slotGrid.getStates()), true));
     juce::StringArray ids;
     for (auto q : quick) ids.add (infoFor (q).id);
     s->setValue ("quick", ids.joinIntoString (","));

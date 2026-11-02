@@ -19,6 +19,8 @@ public:
         gain.reset (sampleRate, 0.05);
         gain.setCurrentAndTargetValue (targetGain());
         engine.currentSampleRate = sampleRate;
+        auto& chain = engine.chains[engine.activeChain.load()];
+        for (int i = 0; i < chain.count; ++i) chain.fx[(size_t) i]->prepare (sampleRate);
 
         juce::MessageManager::callAsync ([weak = juce::WeakReference<Processor> (this), sampleRate]
         {
@@ -43,6 +45,21 @@ public:
         float* r = buffer->getNumChannels() > 1 ? buffer->getWritePointer (1, info.startSample) : l;
 
         auto& f = engine.flags;
+
+        // effect chain (skipped entirely by Bypass)
+        {
+            const int idx = engine.activeChain.load (std::memory_order_acquire);
+            engine.chainInUse.store (idx, std::memory_order_release);
+            if (! f.bypass.load())
+            {
+                const auto& chain = engine.chains[idx];
+                for (int k = 0; k < chain.count; ++k)
+                    if (! chain.fx[(size_t) k]->bypass.load (std::memory_order_relaxed))
+                        chain.fx[(size_t) k]->process (l, r, n);
+            }
+            engine.chainInUse.store (-1, std::memory_order_release);
+        }
+
         if (! f.bypass.load())
         {
             const bool mono = f.mono, swap = f.swap, soloL = f.soloLeft, soloR = f.soloRight, mid = f.mid, side = f.side;
@@ -219,6 +236,38 @@ double AudioEngine::getSmoothPosition() const
 
     const double elapsed = juce::jlimit (0.0, 0.1, nowSeconds() - lastBlockTime.load());
     return juce::jmin (getLength(), lastBlockPosition.load() + elapsed);
+}
+
+void AudioEngine::setEffectChain (const std::vector<std::shared_ptr<EffectProcessor>>& chain)
+{
+    // prepare newcomers before the audio thread can see them
+    for (auto& fx : chain)
+        if (std::find (liveEffects.begin(), liveEffects.end(), fx) == liveEffects.end())
+            fx->prepare (currentSampleRate.load());
+
+    const int next = 1 - activeChain.load();
+    // the audio thread may still be finishing a block on this buffer from before the last flip
+    for (int spins = 0; chainInUse.load (std::memory_order_acquire) == next && spins < 2000; ++spins)
+        juce::Thread::sleep (1);
+
+    auto& target = chains[next];
+    target.count = 0;
+    for (auto& fx : chain)
+        if (target.count < kMaxEffects)
+            target.fx[(size_t) target.count++] = fx.get();
+    activeChain.store (next, std::memory_order_release);
+
+    const double now = nowSeconds();
+    for (auto& old : liveEffects)
+        if (std::find (chain.begin(), chain.end(), old) == chain.end())
+            retired.push_back ({ old, now });
+    liveEffects = chain;
+}
+
+void AudioEngine::collectGarbage()
+{
+    const double now = nowSeconds();
+    retired.erase (std::remove_if (retired.begin(), retired.end(), [now] (const Retired& r) { return now - r.time > 1.0; }), retired.end());
 }
 
 void AudioEngine::setVolume (float v)

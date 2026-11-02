@@ -37,6 +37,27 @@ struct AnalysisFrame
     std::array<float, kPolarBins> polar {};      // 0..1 radius per angle bin (-90..+90 deg)
     std::array<float, kPolarBins> polarPeak {};  // slower-decaying outline
 
+    // musical analysis
+    std::array<float, 12> chroma {};   // C..B, 0..1
+    int   key = -1;                     // 0-11 major, 12-23 minor, -1 unknown
+    float keyConfidence = 0.0f;
+    float bpm = 0.0f, bpmConfidence = 0.0f;
+    float beatPhase = 0.0f;             // 0 at a beat
+    float onset = 0.0f;                 // 0..1 onset strength right now
+
+    // true peak & clipping (since track start)
+    float truePeakDb = kSilenceDb;      // this frame
+    float maxTruePeakDb = kSilenceDb;
+    int   clippedSamples = 0, intersampleOvers = 0;
+
+    // stereo width per band: sub, low, mid, high, air. 0 = mono, 0.5 = wide, 1 = out of phase
+    static constexpr int kWidthBands = 5;
+    std::array<float, kWidthBands> bandWidth {};
+
+    // transport (filled in by the player, not the analyzer)
+    double positionSeconds = 0.0, lengthSeconds = 0.0;
+    bool playing = false;
+
     std::uint64_t frameIndex = 0;
 
     float binToHz (int bin) const noexcept { return (float) (bin * sampleRate / kFftSize); }

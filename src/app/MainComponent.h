@@ -68,6 +68,7 @@ private:
     AnalysisFrame frame;
     std::vector<float> popL, popR;
     float silenceDebt = 0.0f;
+    float settingsDirtyFor = -1.0f;   // >= 0: seconds since a plugin setting changed
 
     TitleBar titleBar;
     HeaderView header;

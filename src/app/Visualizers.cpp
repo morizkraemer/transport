@@ -855,19 +855,52 @@ private:
 template <typename T> std::unique_ptr<Visualizer> make() { return std::make_unique<T>(); }
 } // namespace
 
+namespace plug
+{
+float bandLevel (const AnalysisFrame& f, float lo, float hi) { return tp::bandLevel (f, lo, hi); }
+float bandEdge (int i, int n, float lo, float hi)            { return tp::bandEdge (i, n, lo, hi); }
+juce::String formatDb (float v, int decimals)               { return tp::formatDb (v, decimals); }
+void drawLabel (juce::Graphics& g, const juce::String& t, juce::Rectangle<float> r, juce::Justification j, juce::Colour c, float px)
+{
+    tp::drawLabel (g, t, r, j, c, px);
+}
+}
+
 const std::vector<VisualizerInfo>& visualizerRegistry()
 {
     static const std::vector<VisualizerInfo> registry {
-        { "vu",          "VU Meter",           "Meters",     "VU",   "Classic needle meter with real ballistics and a peak lamp.", make<VuMeter> },
-        { "peakrms",     "Peak / RMS",         "Meters",     "PPM",  "Fast peak and RMS bars per channel, peak hold and clip lamps.", make<PeakRms> },
-        { "loudness",    "Loudness (EBU R128)","Meters",     "LUFS", "Momentary, short-term and integrated LUFS with a history graph.", make<Loudness> },
-        { "spectrum",    "Spectrum Analyzer",  "Analyzers",  "FFT",  "Real-time FFT on a log scale with falling peak caps.", make<Spectrum> },
-        { "spectrogram", "Spectrogram",        "Analyzers",  "SPG",  "Scrolling time x frequency heat map.", make<Spectrogram> },
-        { "scope",       "Oscilloscope",       "Analyzers",  "OSC",  "Triggered waveform with automatic gain.", make<Oscilloscope> },
-        { "polar",       "Polar Stereo Field", "Stereo",     "POL",  "Level by stereo angle with a decaying peak outline.", make<PolarField> },
-        { "goniometer",  "Goniometer",         "Stereo",     "GON",  "Phosphor vectorscope: width, balance and phase at a glance.", make<Goniometer> },
-        { "phase",       "Phase Correlation",  "Stereo",     utf8 ("\xc2\xb1" "1"), "Correlation from -1 to +1 plus L/R balance.", make<PhaseMeter> },
-        { "led",         "Retro LED Bars",     "Fun",        "LED",  "80s hi-fi spectrum with falling peak segments.", make<RetroLed> },
+        // meters
+        { "vu",          "VU Meter",            "Meters",    "VU",   "Classic needle meter with real ballistics and a peak lamp.", make<VuMeter> },
+        { "peakrms",     "Peak / RMS",          "Meters",    "PPM",  "Fast peak and RMS bars per channel, peak hold and clip lamps.", make<PeakRms> },
+        { "loudness",    "Loudness (EBU R128)", "Meters",    "LUFS", "Momentary, short-term and integrated LUFS with a history graph.", make<Loudness> },
+        { "truepeak",    "True Peak & Clips",   "Meters",    "dBTP", "4x oversampled true peak, clipped samples and inter-sample overs.", makeTruePeak },
+        { "dynamics",    "Dynamics",            "Meters",    "DR",   "Crest factor and peak-to-loudness ratio: how squashed is it?", makeDynamics },
+        // analyzers
+        { "spectrum",    "Spectrum Analyzer",   "Analyzers", "FFT",  "Real-time FFT on a log scale with falling peak caps.", make<Spectrum> },
+        { "spectrogram", "Spectrogram",         "Analyzers", "SPG",  "Scrolling time x frequency heat map.", make<Spectrogram> },
+        { "waterfall",   "Waterfall 3D",        "Analyzers", "3D",   "Spectrum history as a receding landscape.", makeWaterfall },
+        { "tonal",       "Tonal Balance",       "Analyzers", "TBC",  "Four bands against a reference range for modern mixes.", makeTonalBalance },
+        { "scope",       "Oscilloscope",        "Analyzers", "OSC",  "Triggered waveform with automatic gain.", make<Oscilloscope> },
+        // stereo
+        { "polar",       "Polar Stereo Field",  "Stereo",    "POL",  "Level by stereo angle with a decaying peak outline.", make<PolarField> },
+        { "goniometer",  "Goniometer",          "Stereo",    "GON",  "Phosphor vectorscope: width, balance and phase at a glance.", make<Goniometer> },
+        { "phase",       "Phase Correlation",   "Stereo",    utf8 ("\xc2\xb1" "1"), "Correlation from -1 to +1 plus L/R balance.", make<PhaseMeter> },
+        { "imager",      "Stereo Imager",       "Stereo",    "IMG",  "Stereo width per band, from sub to air.", makeImager },
+        // musical
+        { "tempo",       "Tempo (BPM)",         "Musical",   "BPM",  "Detected tempo with a beat display.", makeTempo },
+        { "key",         "Key",                 "Musical",   "KEY",  "Detected key with Camelot code and a live chromagram.", makeKeyDisplay },
+        { "tuner",       "Pitch / Tuner",       "Musical",   "HZ",   "Dominant note and how many cents it is off.", makeTuner },
+        // effects
+        { "eq",          "Equalizer",           "Effects",   "EQ",   "5-band EQ: drag the nodes over the live spectrum, scroll for Q.", makeEqualizer },
+        { "compressor",  "Compressor",          "Effects",   "CMP",  "Threshold, ratio, attack, release, makeup, with transfer curve.", makeCompressor },
+        { "limiter",     "Maximizer",           "Effects",   "MAX",  "Look-ahead limiter: drive it into a ceiling, watch the reduction.", makeLimiter },
+        // fun
+        { "led",         "Retro LED Bars",      "Fun",       "LED",  "80s hi-fi spectrum with falling peak segments.", make<RetroLed> },
+        { "radial",      "Radial Spectrum",     "Fun",       "RAD",  "Spectrum around a circle that breathes with the beat.", makeRadial },
+        { "particles",   "Particles",           "Fun",       "PRT",  "Bursts of particles on every hit.", makeParticles },
+        { "ambient",     "Cover Glow",          "Fun",       "AMB",  "Soft light in the album art's colours, pulsing with the bass.", makeAmbient },
+        { "vinyl",       "Vinyl Deck",          "Fun",       "VNL",  "Spinning record with the cover as label; the arm follows the song.", makeVinyl },
+        { "reels",       "Tape Reels",          "Fun",       "REEL", "Reel-to-reel that winds from one spool to the other.", makeReels },
     };
     return registry;
 }

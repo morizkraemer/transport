@@ -3,6 +3,9 @@
 #include <juce_dsp/juce_dsp.h>
 #include "AnalysisFrame.h"
 #include "LoudnessMeter.h"
+#include "KeyDetector.h"
+#include "TempoTracker.h"
+#include "TruePeak.h"
 
 namespace tp
 {
@@ -39,6 +42,13 @@ private:
     std::array<float, kPolarBins> polarTick {}, polarHist {}, polarPeak {};
 
     LoudnessMeter loudness;
+    TempoTracker tempo;
+    KeyDetector key;
+    TruePeak truePeak[2];
+    float tickTruePeak = 0.0f, maxTruePeak = 0.0f;
+    int clipped = 0, overs = 0;
+    std::vector<float> sideData, magnitudes;
+    std::array<float, AnalysisFrame::kWidthBands> width {};
     std::uint64_t frameCounter = 0;
 };
 } // namespace tp

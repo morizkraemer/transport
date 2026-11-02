@@ -18,6 +18,8 @@ Analyzer::Analyzer()
     historyL.assign (kFftSize, 0.0f);
     historyR.assign (kFftSize, 0.0f);
     fftData.assign (kFftSize * 2, 0.0f);
+    sideData.assign (kFftSize * 2, 0.0f);
+    magnitudes.assign (kNumBins, 0.0f);
     window.resize (kFftSize);
 
     for (int i = 0; i < kFftSize; ++i)
@@ -33,12 +35,19 @@ void Analyzer::prepare (double newSampleRate)
     // one-pole on x^2 with a 300 ms time constant (VU / RMS integration)
     vuCoeff = (float) std::exp (-1.0 / (0.3 * sampleRate));
     loudness.prepare (sampleRate);
+    tempo.prepare (sampleRate);
     resetTrack();
 }
 
 void Analyzer::resetTrack()
 {
     loudness.reset();
+    tempo.reset();
+    key.reset();
+    for (auto& t : truePeak) t.reset();
+    maxTruePeak = 0.0f;
+    clipped = overs = 0;
+    width.fill (0.0f);
     maxPeak = 0.0f;
     meanSquare[0] = meanSquare[1] = 0.0;
 }
@@ -62,6 +71,13 @@ void Analyzer::push (const float* left, const float* right, int numSamples)
         tickPeak[0] = std::max (tickPeak[0], std::abs (l));
         tickPeak[1] = std::max (tickPeak[1], std::abs (r));
 
+        const float tpL = truePeak[0].process (l), tpR = truePeak[1].process (r);
+        const float tp = std::max (tpL, tpR);
+        tickTruePeak = std::max (tickTruePeak, tp);
+        const bool sampleClip = std::abs (l) >= 0.9999f || std::abs (r) >= 0.9999f;
+        if (sampleClip) ++clipped;
+        else if (tp > 1.0f) ++overs;
+
         // Polar stereo field: angle from mid/side, radius from level
         const float m = (l + r) * half, s = (l - r) * half;
         const float amp = std::sqrt (l * l + r * r) * 0.70710678f;
@@ -76,6 +92,7 @@ void Analyzer::push (const float* left, const float* right, int numSamples)
     }
 
     loudness.process (left, right, numSamples);
+    tempo.process (left, right, numSamples);
     samplesSinceFrame += numSamples;
 }
 
@@ -98,9 +115,36 @@ void Analyzer::computeFrame (AnalysisFrame& f, float dt)
     {
         const int idx = (historyPos + i) & (kFftSize - 1);
         fftData[(size_t) i] = 0.5f * (historyL[(size_t) idx] + historyR[(size_t) idx]) * window[(size_t) i];
+        sideData[(size_t) i] = 0.5f * (historyL[(size_t) idx] - historyR[(size_t) idx]) * window[(size_t) i];
     }
     std::fill (fftData.begin() + kFftSize, fftData.end(), 0.0f);
+    std::fill (sideData.begin() + kFftSize, sideData.end(), 0.0f);
     fft.performFrequencyOnlyForwardTransform (fftData.data(), true);
+    fft.performFrequencyOnlyForwardTransform (sideData.data(), true);
+
+    if (samplesSinceFrame > 0)
+    {
+        const double binHz = sampleRate / kFftSize;
+        static const float edges[AnalysisFrame::kWidthBands + 1] = { 20.0f, 120.0f, 500.0f, 2000.0f, 6000.0f, 20000.0f };
+        double mid = 0.0, sideE = 0.0, total = 0.0;
+        for (int band = 0; band < AnalysisFrame::kWidthBands; ++band)
+        {
+            double em = 0.0, es = 0.0;
+            for (int b = juce::jmax (1, (int) (edges[band] / binHz)); b < juce::jmin (kNumBins, (int) (edges[band + 1] / binHz)); ++b)
+            {
+                em += (double) fftData[(size_t) b] * fftData[(size_t) b];
+                es += (double) sideData[(size_t) b] * sideData[(size_t) b];
+            }
+            mid += em; sideE += es;
+            const float w = (em + es) > 1.0e-9 ? (float) (es / (em + es)) : 0.0f;
+            width[(size_t) band] += (w - width[(size_t) band]) * 0.3f;
+        }
+        total = mid + sideE;
+
+        for (int b = 0; b < kNumBins; ++b) magnitudes[(size_t) b] = fftData[(size_t) b];
+        if (total > 1.0e-7)
+            key.addSpectrum (magnitudes.data(), kNumBins, binHz, (float) std::sqrt (total));
+    }
 
     const float norm = 4.0f / (float) kFftSize;          // 2/N * 1/(window coherent gain 0.5)
     const float release = 1.0f - std::exp (-dt * 9.0f);
@@ -148,6 +192,27 @@ void Analyzer::computeFrame (AnalysisFrame& f, float dt)
     }
     f.polar = polarHist;
     f.polarPeak = polarPeak;
+
+    // --- true peak, clipping
+    if (samplesSinceFrame > 0)
+    {
+        f.truePeakDb = toDb (tickTruePeak);
+        maxTruePeak = std::max (maxTruePeak, tickTruePeak);
+        tickTruePeak = 0.0f;
+    }
+    f.maxTruePeakDb = toDb (maxTruePeak);
+    f.clippedSamples = clipped;
+    f.intersampleOvers = overs;
+    f.bandWidth = width;
+
+    // --- tempo & key
+    f.bpm = tempo.bpm();
+    f.bpmConfidence = tempo.confidence();
+    f.beatPhase = tempo.beatPhase();
+    f.onset = tempo.onset();
+    f.chroma = key.chroma();
+    f.key = key.key();
+    f.keyConfidence = key.confidence();
 
     // --- loudness
     f.momentaryLufs  = loudness.momentary();

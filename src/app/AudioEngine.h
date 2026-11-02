@@ -2,6 +2,7 @@
 
 #include <juce_audio_utils/juce_audio_utils.h>
 #include "core/StereoFifo.h"
+#include "core/Effects.h"
 
 namespace tp
 {
@@ -60,6 +61,11 @@ public:
     const FileDetails& details() const { return fileDetails; }
     juce::File currentFile() const     { return loadedFile; }
 
+    /** Replaces the effect chain (UI thread). Effects run in this order, before monitoring and metering. */
+    void setEffectChain (const std::vector<std::shared_ptr<EffectProcessor>>& chain);
+    /** Frees effects the audio thread can no longer be using (UI thread, call regularly). */
+    void collectGarbage();
+
     std::function<void (double newSampleRate)> onSampleRateChanged;
 
 private:
@@ -82,6 +88,15 @@ private:
     std::atomic<double> currentSampleRate { 44100.0 };
 
     std::atomic<double> lastBlockPosition { 0.0 }, lastBlockTime { 0.0 };
+
+    // double-buffered chain: the UI fills the inactive buffer, then flips the index
+    static constexpr int kMaxEffects = 32;
+    struct Chain { std::array<EffectProcessor*, kMaxEffects> fx {}; int count = 0; };
+    Chain chains[2];
+    std::atomic<int> activeChain { 0 }, chainInUse { -1 };
+    std::vector<std::shared_ptr<EffectProcessor>> liveEffects;
+    struct Retired { std::shared_ptr<EffectProcessor> fx; double time; };
+    std::vector<Retired> retired;
 
     bool offline = false;
     juce::AudioBuffer<float> offlineBuffer;

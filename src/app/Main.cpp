@@ -196,7 +196,7 @@ juce::File writeDemoTrack()
     return file;
 }
 
-/** --snapshot out.png [--size 1400x560] [--slots vu,polar] [--cols 3] [--file x.mp3] [--seek 0.3] [--seconds 4] [--browser] */
+/** --snapshot out.png [--size 1400x560] [--slots vu,polar] [--states '[{...}]'] [--cols 3] [--file x.mp3] [--seek 0.3] [--seconds 4] [--browser] [--wave bars|mirror|reflection|line|spectral|3band] */
 int runSnapshot (const juce::StringArray& args)
 {
     auto value = [&] (const char* key, const juce::String& fallback)
@@ -215,7 +215,11 @@ int runSnapshot (const juce::StringArray& args)
     if (args.contains ("--slots"))
     {
         main->getSlots().setColumns (value ("--cols", "3").getIntValue());
-        main->getSlots().setIds (juce::StringArray::fromTokens (value ("--slots", ""), ",", ""));
+        juce::Array<juce::var> states;
+        const auto parsed = juce::JSON::parse (value ("--states", "[]"));   // keep the var alive while reading it
+        if (auto* arr = parsed.getArray()) states = *arr;
+        main->getSlots().setIds (juce::StringArray::fromTokens (value ("--slots", ""), ",", ""), states);
+        main->getEngine().setEffectChain (main->getSlots().effectChain());
     }
 
     juce::File track (value ("--file", {}));
@@ -228,6 +232,9 @@ int runSnapshot (const juce::StringArray& args)
     auto& thumb = main->getEngine().thumbnail();
     for (int i = 0; i < 500 && ! thumb.isFullyLoaded(); ++i)
         juce::Thread::sleep (10);
+    main->getWaveform().setBandData (WaveformView::analyse (track, main->getEngine().formats(), [] { return false; }));
+    const int styleIndex = WaveformView::styleIds().indexOf (value ("--wave", "bars"));
+    if (styleIndex >= 0) main->getWaveform().setStyle ((WaveformView::Style) styleIndex, false);
     main->getWaveform().refreshBars();
 
     const double length = main->getEngine().getLength();

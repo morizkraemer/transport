@@ -32,6 +32,7 @@ public:
     Slot (SlotGrid& g, const VisualizerInfo& i) : grid (g), info (&i)
     {
         vis = i.create();
+        attach (*vis);
         addAndMakeVisible (*vis);
         appear.snap (0.0f);
         appear.target = 1.0f;
@@ -45,7 +46,7 @@ public:
     Rectangle<float> current, target;
     bool hasBounds = false, removing = false, beingDragged = false;
     float wait = 0.0f;
-    Smoothed appear, hover, lift, swapFade, buttonHover[2];
+    Smoothed appear, hover, lift, swapFade, bypassShade, buttonHover[3];
     int pressedButton = -1;
     Point<float> grabOffset;
 
@@ -55,12 +56,25 @@ public:
         outgoing = std::move (vis);
         info = &i;
         vis = i.create();
+        attach (*vis);
         addAndMakeVisible (*vis);
         vis->setAlpha (0.0f);
         swapFade.snap (0.0f);
         swapFade.target = 1.0f;
         resized();
     }
+
+    void attach (Visualizer& v)
+    {
+        v.trackChanged (grid.cover);
+        v.onStateChanged = [this] { if (grid.onStateChanged) grid.onStateChanged(); };
+    }
+
+    bool isEffect() const { return vis->effect() != nullptr; }
+    bool isBypassed() const { return isEffect() && vis->effect()->bypass.load(); }
+    int buttonCount() const { return isEffect() ? 3 : 2; }
+    enum class Btn { power, replace, remove };
+    Btn kindOf (int i) const { return isEffect() ? (Btn) i : (Btn) (i + 1); }
 
     /** Returns true once a removed slot has faded out and can be deleted. */
     bool step (float dt)
@@ -69,8 +83,12 @@ public:
         if (wait > 0.0f) wait -= dt;
         else dirty |= appear.tick (dt, removing ? 14.0f : 9.0f);
 
+        hover.target = (! removing && isMouseOverOrDragging (true)) ? 1.0f : 0.0f;
+        if (hover.target == 0.0f) for (auto& b : buttonHover) b.target = 0.0f;
+        bypassShade.target = isBypassed() ? 1.0f : 0.0f;
         dirty |= hover.tick (dt, 14.0f);
         dirty |= lift.tick (dt, 16.0f);
+        dirty |= bypassShade.tick (dt, 10.0f);
         for (auto& b : buttonHover) dirty |= b.tick (dt, 18.0f);
 
         if (swapFade.tick (dt, 8.0f) || outgoing != nullptr)
@@ -114,6 +132,15 @@ public:
 
     void paintOverChildren (juce::Graphics& g) override
     {
+        if (bypassShade.current > 0.01f)
+        {
+            g.setColour (juce::Colours::black.withAlpha (0.28f * bypassShade.current));
+            g.fillRect (getLocalBounds());
+            g.setColour (theme::label.withAlpha (bypassShade.current));
+            g.setFont (theme::font (9.5f, true));
+            g.drawText ("BYPASSED", getLocalBounds().toFloat().reduced (12, 8).removeFromBottom (14), juce::Justification::centredRight, false);
+        }
+
         const float h = juce::jmax (hover.current, lift.current);
         if (h > 0.01f)
         {
@@ -123,27 +150,35 @@ public:
 
             g.setColour (juce::Colours::white.withAlpha (h));
             g.setFont (theme::font (10.5f, true));
-            g.drawText (info->name.toUpperCase(), Rectangle<float> (12, 6, (float) getWidth() - 90, 22), juce::Justification::centredLeft, true);
+            g.drawText (info->name.toUpperCase(), Rectangle<float> (12, 6, (float) getWidth() - 30.0f * (float) buttonCount() - 24.0f, 22), juce::Justification::centredLeft, true);
 
-            for (int i = 0; i < 2; ++i)
+            for (int i = 0; i < buttonCount(); ++i)
             {
                 const auto r = buttonRect (i);
-                g.setColour (Colour (0xff2e2e2e).interpolatedWith (i == 1 ? Colour (0xff6a3a2e) : Colour (0xff4a4a4a), buttonHover[i].current).withAlpha (0.9f * h));
+                const auto kind = kindOf (i);
+                g.setColour (Colour (0xff2e2e2e).interpolatedWith (kind == Btn::remove ? Colour (0xff6a3a2e) : Colour (0xff4a4a4a), buttonHover[i].current).withAlpha (0.9f * h));
                 g.fillRoundedRectangle (r, 3.0f);
-                g.setColour (Colour (0xffd6d6d6).interpolatedWith (juce::Colours::white, buttonHover[i].current).withAlpha (h));
+                auto iconColour = Colour (0xffd6d6d6).interpolatedWith (juce::Colours::white, buttonHover[i].current);
+                if (kind == Btn::power) iconColour = isBypassed() ? Colour (0xff8a8a8a) : theme::accent;
+                g.setColour (iconColour.withAlpha (h));
                 const auto c = r.getCentre();
                 juce::Path p;
-                if (i == 0)
+                if (kind == Btn::replace)
                 {
                     p.startNewSubPath (c.x - 6, c.y - 3); p.lineTo (c.x + 5, c.y - 3);
                     p.startNewSubPath (c.x + 2, c.y - 6); p.lineTo (c.x + 5, c.y - 3); p.lineTo (c.x + 2, c.y);
                     p.startNewSubPath (c.x + 6, c.y + 3); p.lineTo (c.x - 5, c.y + 3);
                     p.startNewSubPath (c.x - 2, c.y); p.lineTo (c.x - 5, c.y + 3); p.lineTo (c.x - 2, c.y + 6);
                 }
-                else
+                else if (kind == Btn::remove)
                 {
                     p.startNewSubPath (c.x - 4.5f, c.y - 4.5f); p.lineTo (c.x + 4.5f, c.y + 4.5f);
                     p.startNewSubPath (c.x + 4.5f, c.y - 4.5f); p.lineTo (c.x - 4.5f, c.y + 4.5f);
+                }
+                else
+                {
+                    p.addCentredArc (c.x, c.y + 0.5f, 5.5f, 5.5f, 0, 0.6f, 2.0f * juce::MathConstants<float>::pi - 0.6f, true);
+                    p.startNewSubPath (c.x, c.y - 7.0f); p.lineTo (c.x, c.y - 1.0f);
                 }
                 g.strokePath (p, juce::PathStrokeType (1.5f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
             }
@@ -155,15 +190,13 @@ public:
         }
     }
 
-    Rectangle<float> buttonRect (int i) const { return { (float) getWidth() - 62.0f + 30.0f * (float) i, 7.0f, 26.0f, 22.0f }; }
-    int buttonAt (Point<float> p) const { for (int i = 0; i < 2; ++i) if (buttonRect (i).expanded (2).contains (p)) return i; return -1; }
+    Rectangle<float> buttonRect (int i) const { return { (float) getWidth() - 4.0f - 30.0f * (float) (buttonCount() - i), 7.0f, 26.0f, 22.0f }; }
+    int buttonAt (Point<float> p) const { for (int i = 0; i < buttonCount(); ++i) if (buttonRect (i).expanded (2).contains (p)) return i; return -1; }
 
-    void mouseEnter (const juce::MouseEvent&) override { hover.target = 1.0f; }
-    void mouseExit (const juce::MouseEvent&) override  { hover.target = 0.0f; for (auto& b : buttonHover) b.target = 0.0f; }
     void mouseMove (const juce::MouseEvent& e) override
     {
         const int b = buttonAt (e.position);
-        for (int i = 0; i < 2; ++i) buttonHover[i].target = i == b ? 1.0f : 0.0f;
+        for (int i = 0; i < 3; ++i) buttonHover[i].target = i == b ? 1.0f : 0.0f;
         setMouseCursor (b >= 0 ? juce::MouseCursor::PointingHandCursor : juce::MouseCursor::DraggingHandCursor);
     }
 
@@ -192,8 +225,12 @@ public:
         if (pressedButton >= 0 && buttonAt (e.position) == pressedButton)
         {
             const int index = grid.indexOf (this);
-            if (pressedButton == 0) { if (grid.onBrowseRequested) grid.onBrowseRequested (index); }
-            else grid.removeSlot (index);
+            switch (kindOf (pressedButton))
+            {
+                case Btn::power:   vis->effect()->bypass = ! vis->effect()->bypass.load(); if (grid.onStateChanged) grid.onStateChanged(); break;
+                case Btn::replace: if (grid.onBrowseRequested) grid.onBrowseRequested (index); break;
+                case Btn::remove:  grid.removeSlot (index); break;
+            }
         }
         pressedButton = -1;
     }
@@ -286,15 +323,17 @@ int SlotGrid::indexOf (const Slot* s) const
     return -1;
 }
 
-void SlotGrid::setIds (const juce::StringArray& ids)
+void SlotGrid::setIds (const juce::StringArray& ids, const juce::Array<juce::var>& states)
 {
     for (auto& s : slots) removeChildComponent (s.get());
     slots.clear();
     float wait = 0.12f;
-    for (auto& id : ids)
-        if (auto* info = findVisualizer (id))
+    for (int n = 0; n < ids.size(); ++n)
+        if (auto* info = findVisualizer (ids[n]))
         {
             auto s = std::make_unique<Slot> (*this, *info);
+            if (n < states.size() && ! states[n].isVoid())
+                s->vis->setState (states[n]);
             s->wait = wait;
             wait += 0.07f;
             addAndMakeVisible (*s);
@@ -305,6 +344,27 @@ void SlotGrid::setIds (const juce::StringArray& ids)
     addTile->appear.target = 1.0f;
     addTile->toBack();
     layout (true);
+}
+
+juce::Array<juce::var> SlotGrid::getStates() const
+{
+    juce::Array<juce::var> out;
+    for (auto* s : activeSlots()) out.add (s->vis->getState());
+    return out;
+}
+
+std::vector<std::shared_ptr<EffectProcessor>> SlotGrid::effectChain() const
+{
+    std::vector<std::shared_ptr<EffectProcessor>> out;
+    for (auto* s : activeSlots())
+        if (auto fx = s->vis->effect()) out.push_back (fx);
+    return out;
+}
+
+void SlotGrid::setCover (const juce::Image& newCover)
+{
+    cover = newCover;
+    for (auto& s : slots) s->vis->trackChanged (cover);
 }
 
 juce::StringArray SlotGrid::getIds() const

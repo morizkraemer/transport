@@ -17,13 +17,21 @@ Grab the newest **vX.Y.Z** release from the Releases page (a rolling *developmen
 - **Plugin slots:** click **+** to add a plugin, hover a slot for replace/remove, drag a slot to reorder, right-click for columns.
 - **Quick-access buttons** (top right): left-click runs, right-click assigns another function or changes the grid size (2×2, 3×2, 4×2).
 
-### Plugins
+### Plugins (26)
 
-| Meters | Analyzers | Stereo | Fun |
-|---|---|---|---|
-| VU Meter | Spectrum Analyzer | Polar Stereo Field | Retro LED Bars |
-| Peak / RMS | Spectrogram | Goniometer | |
-| Loudness (EBU R128) | Oscilloscope | Phase Correlation | |
+| Meters | Analyzers | Stereo | Musical | Effects | Fun |
+|---|---|---|---|---|---|
+| VU Meter | Spectrum Analyzer | Polar Stereo Field | Tempo (BPM) | Equalizer (5-band) | Retro LED Bars |
+| Peak / RMS | Spectrogram | Goniometer | Key + Camelot | Compressor | Radial Spectrum |
+| Loudness (EBU R128) | Waterfall 3D | Phase Correlation | Pitch / Tuner | Maximizer (limiter) | Particles |
+| True Peak & Clips | Tonal Balance | Stereo Imager | | | Cover Glow |
+| Dynamics | Oscilloscope | | | | Vinyl Deck, Tape Reels |
+
+**Effects change the sound.** They run in slot order (drag to reorder the chain), before the meters, so every analyzer shows the processed signal. The power button in a slot's header bypasses that effect; **Bypass** in quick access turns off all effects and monitoring at once. Settings are saved.
+
+### Waveform
+
+Right-click the waveform (or MENU → Waveform style): Bars, Mirror, Reflection, Line, Spectral colour (orange lows, white mids, blue highs), 3-Band.
 
 ### Quick-access functions
 
