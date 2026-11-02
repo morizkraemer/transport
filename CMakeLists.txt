@@ -51,7 +51,16 @@ target_sources(Transport PRIVATE
     src/app/HeaderView.cpp
     src/app/WaveformView.cpp
     src/app/TitleBar.cpp
+    src/app/TaskbarPlayer.cpp
+    src/app/DefaultPlayer.cpp
     src/app/MainComponent.cpp)
+
+if(APPLE)
+    target_link_libraries(Transport PRIVATE "-framework CoreServices")
+endif()
+if(WIN32)
+    target_link_libraries(Transport PRIVATE dwmapi comctl32 ole32 uuid shell32)
+endif()
 
 target_include_directories(Transport PRIVATE src)
 

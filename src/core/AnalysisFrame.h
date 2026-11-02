@@ -30,6 +30,7 @@ struct AnalysisFrame
     float momentaryLufs  = kSilenceDb;
     float shortTermLufs  = kSilenceDb;
     float integratedLufs = kSilenceDb;
+    float loudnessRange  = 0.0f;   // LRA, LU
 
     float correlation = 0.0f;    // -1 .. +1
     float balanceDb   = 0.0f;    // L minus R

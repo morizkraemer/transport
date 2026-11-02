@@ -218,6 +218,7 @@ void Analyzer::computeFrame (AnalysisFrame& f, float dt)
     f.momentaryLufs  = loudness.momentary();
     f.shortTermLufs  = loudness.shortTerm();
     f.integratedLufs = loudness.integrated();
+    f.loudnessRange  = loudness.range();
 
     samplesSinceFrame = 0;
 }

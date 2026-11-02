@@ -1,16 +1,130 @@
 #include "MainComponent.h"
 #include "TrackInfo.h"
+#include "DefaultPlayer.h"
 
 namespace tp
 {
 namespace
 {
-constexpr int kTitleH = 34, kHeaderH = 150, kWaveH = 66;
-constexpr int kCompactHeight = kTitleH + kHeaderH + kWaveH;
+constexpr int kTitleH = TitleBar::kHeight;
+constexpr int kMinWave = 32, kMaxWave = 180, kMinPlugins = 90;
 
 const juce::StringArray defaultSlots { "vu", "polar" };
 }
 
+//==============================================================================
+/** Horizontal drag handle between two areas; only visible (and grabbable) in customize mode. */
+class MainComponent::Splitter final : public juce::Component
+{
+public:
+    std::function<void (int deltaY)> onDrag;
+    std::function<void()> onDragEnd;
+    Smoothed shown, hover;
+
+    Splitter() { setMouseCursor (juce::MouseCursor::UpDownResizeCursor); }
+
+    void animate (float dt)
+    {
+        hover.target = isMouseOverOrDragging() ? 1.0f : 0.0f;
+        const bool a = shown.tick (dt, 10.0f), b = hover.tick (dt, 16.0f);
+        setInterceptsMouseClicks (shown.target > 0.5f, false);
+        if (a || b) repaint();
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        if (shown.current < 0.01f) return;
+        const auto r = getLocalBounds().toFloat();
+        g.setColour (theme::accent.withAlpha ((0.25f + 0.45f * hover.current) * shown.current));
+        g.fillRect (r.withSizeKeepingCentre (r.getWidth(), 2.0f));
+        const auto pill = juce::Rectangle<float> (46.0f, 10.0f).withCentre (r.getCentre());
+        g.setColour (theme::accent.withAlpha (shown.current));
+        g.fillRoundedRectangle (pill, 5.0f);
+        g.setColour (theme::titleBlock.withAlpha (shown.current));
+        for (int i = -1; i <= 1; ++i)
+            g.fillEllipse (juce::Rectangle<float> (3.0f, 3.0f).withCentre (pill.getCentre().translated ((float) i * 8.0f, 0.0f)));
+    }
+
+    void mouseDown (const juce::MouseEvent&) override { lastY = 0; }
+    void mouseDrag (const juce::MouseEvent& e) override
+    {
+        const int dy = e.getDistanceFromDragStartY();
+        if (onDrag) onDrag (dy - lastY);
+        lastY = dy;
+    }
+    void mouseUp (const juce::MouseEvent&) override { if (onDragEnd) onDragEnd(); }
+
+private:
+    int lastY = 0;
+};
+
+//==============================================================================
+/** Slim banner asking to become the default audio player. */
+class MainComponent::DefaultPrompt final : public juce::Component
+{
+public:
+    std::function<void (int choice)> onChoice;   // 0 make default, 1 not now, 2 never
+    Smoothed shown;
+    HoverState buttons[3];
+
+    void animate (float dt)
+    {
+        bool dirty = shown.tick (dt, 9.0f);
+        for (auto& b : buttons) dirty |= b.tick (dt);
+        setVisible (shown.current > 0.01f);
+        if (dirty) repaint();
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        const float a = shown.current;
+        auto r = getLocalBounds().toFloat().reduced (1.0f).translated (0.0f, 10.0f * (1.0f - easeOutCubic (a)));
+        juce::DropShadow (juce::Colours::black.withAlpha (0.45f * a), 18, { 0, 6 }).drawForRectangle (g, r.toNearestInt());
+        g.setColour (theme::titleBlock.withAlpha (0.97f * a));
+        g.fillRoundedRectangle (r, 8.0f);
+        g.setColour (theme::accent.withAlpha (a));
+        g.fillEllipse (juce::Rectangle<float> (7, 7).withCentre ({ r.getX() + 18.0f, r.getCentreY() }));
+        g.setColour (juce::Colours::white.withAlpha (a));
+        g.setFont (theme::font (12.0f, true));
+        g.drawText ("Make Transport your default audio player?", r.withTrimmedLeft (32).withTrimmedRight (310), juce::Justification::centredLeft, true);
+
+        const char* labels[] = { "Make default", "Not now", "Don't ask again" };
+        for (int i = 0; i < 3; ++i)
+        {
+            const auto b = buttonRect (i).translated (0.0f, 10.0f * (1.0f - easeOutCubic (a)));
+            const float h = buttons[i].hover.current;
+            g.setColour ((i == 0 ? theme::accent.interpolatedWith (juce::Colours::white, 0.2f * h) : juce::Colour (0xff3a3a3a).interpolatedWith (juce::Colour (0xff4a4a4a), h)).withAlpha (a));
+            g.fillRoundedRectangle (b, 5.0f);
+            g.setColour ((i == 0 ? theme::titleBlock : juce::Colours::white).withAlpha (a));
+            g.setFont (theme::font (11.0f, i == 0));
+            g.drawText (labels[i], b, juce::Justification::centred, false);
+        }
+    }
+
+    juce::Rectangle<float> buttonRect (int i) const
+    {
+        const float widths[] = { 104.0f, 74.0f, 112.0f };
+        float x = (float) getWidth() - 10.0f;
+        for (int k = 2; k >= i; --k) x -= widths[k] + (k < 2 ? 6.0f : 0.0f);
+        return { x, ((float) getHeight() - 26.0f) * 0.5f, widths[i], 26.0f };
+    }
+
+    int buttonAt (juce::Point<float> p) const { for (int i = 0; i < 3; ++i) if (buttonRect (i).contains (p)) return i; return -1; }
+    void mouseMove (const juce::MouseEvent& e) override
+    {
+        const int b = buttonAt (e.position);
+        for (int i = 0; i < 3; ++i) buttons[i].hover.target = i == b ? 1.0f : 0.0f;
+        setMouseCursor (b >= 0 ? juce::MouseCursor::PointingHandCursor : juce::MouseCursor::NormalCursor);
+    }
+    void mouseExit (const juce::MouseEvent&) override { for (auto& b : buttons) b.hover.target = 0.0f; }
+    void mouseUp (const juce::MouseEvent& e) override
+    {
+        const int b = buttonAt (e.position);
+        if (b >= 0 && onChoice) onChoice (b);
+    }
+};
+
+//==============================================================================
 MainComponent::MainComponent (bool isHeadless)
     : headless (isHeadless), waveform (engine.thumbnail(), engine.formats())
 {
@@ -29,13 +143,32 @@ MainComponent::MainComponent (bool isHeadless)
     addAndMakeVisible (header);
     addAndMakeVisible (waveform);
     addAndMakeVisible (slotGrid);
+    splitHeader = std::make_unique<Splitter>();
+    splitWave = std::make_unique<Splitter>();
+    addAndMakeVisible (*splitHeader);
+    addAndMakeVisible (*splitWave);
+    splitHeader->onDrag = [this] (int dy) { headerHeight = juce::jlimit (HeaderView::kMinHeight, HeaderView::kMaxHeight, headerHeight + dy); resized(); };
+    splitWave->onDrag = [this] (int dy) { waveHeight = juce::jlimit (kMinWave, kMaxWave, waveHeight + dy); resized(); };
+    splitHeader->onDragEnd = splitWave->onDragEnd = [this] { saveSettings(); };
     addChildComponent (browser);
+    defaultPrompt = std::make_unique<DefaultPrompt>();
+    addChildComponent (*defaultPrompt);
+    defaultPrompt->onChoice = [this] (int choice)
+    {
+        defaultPrompt->shown.target = 0.0f;
+        auto* st = properties.getUserSettings();
+        if (choice == 0) toast (defaultplayer::makeDefault());
+        if (choice == 2) st->setValue ("defaultPrompt", "never");
+        st->saveIfNeeded();
+    };
 
     // ---- title bar
     titleBar.onMenu = [this] { showMainMenu(); };
     titleBar.onMinimise = [this] { if (onMinimise) onMinimise(); };
     titleBar.onMaximise = [this] { if (onMaximise) onMaximise(); };
     titleBar.onClose = [this] { if (onClose) onClose(); };
+    titleBar.onDone = [this] { setCustomizing (false); };
+    header.onLayoutChanged = [this] { titleBar.setMenuWidth (header.coverRight()); };
 
     // ---- header
     header.onPlayPause = [this]
@@ -63,7 +196,7 @@ MainComponent::MainComponent (bool isHeadless)
     slotGrid.onBrowseRequested = [this] (int index) { browser.open (index, slotGrid.getIds()); };
     slotGrid.onChanged = [this] { engine.setEffectChain (slotGrid.effectChain()); saveSettings(); };
     slotGrid.onStateChanged = [this] { settingsDirtyFor = 0.0f; };
-    slotGrid.onRowsChanged = [this] (int rows) { growForRows (rows); };
+    slotGrid.onCustomizeRequested = [this] { setCustomizing (! customizing); };
     browser.onPick = [this] (int index, const juce::String& id)
     {
         if (index < 0) slotGrid.addVisualizer (id);
@@ -73,7 +206,6 @@ MainComponent::MainComponent (bool isHeadless)
     // ---- restore settings
     auto slotIds = juce::StringArray::fromTokens (headless ? defaultSlots.joinIntoString (",") : settings->getValue ("slots", defaultSlots.joinIntoString (",")), ",", "");
     slotIds.removeEmptyStrings();
-    slotGrid.setColumns (headless ? 3 : settings->getIntValue ("columns", 3));
     juce::Array<juce::var> slotStates;
     if (! headless)
     {
@@ -81,12 +213,24 @@ MainComponent::MainComponent (bool isHeadless)
         if (auto* arr = parsed.getArray())
             slotStates = *arr;
     }
-    slotGrid.setIds (slotIds, slotStates);
+    juce::Array<int> slotWidths;
+    if (! headless)
+        for (auto& w : juce::StringArray::fromTokens (settings->getValue ("slotWidths"), ",", ""))
+            slotWidths.add (w.getIntValue());
+    slotGrid.setIds (slotIds, slotStates, slotWidths);
+
+    if (! headless)
+    {
+        headerHeight = juce::jlimit (HeaderView::kMinHeight, HeaderView::kMaxHeight, settings->getIntValue ("headerHeight", HeaderView::kDefaultHeight));
+        waveHeight = juce::jlimit (kMinWave, kMaxWave, settings->getIntValue ("waveHeight", 56));
+        setUiScale ((float) settings->getDoubleValue ("uiScale", 1.0));
+        taskbarPlayer = settings->getBoolValue ("taskbarPlayer", true);
+    }
     engine.setEffectChain (slotGrid.effectChain());
 
     quickColumns = juce::jlimit (2, 4, settings->getIntValue ("quickColumns", 2));
-    const auto quickIds = juce::StringArray::fromTokens (settings->getValue ("quick", "monitor,playlist,addvis,dim"), ",", "");
-    const QuickAction defaults[] = { QuickAction::monitor, QuickAction::playlist, QuickAction::addVisualizer, QuickAction::dim,
+    const auto quickIds = juce::StringArray::fromTokens (settings->getValue ("quick", "monitor,playlist,customize,dim"), ",", "");
+    const QuickAction defaults[] = { QuickAction::monitor, QuickAction::playlist, QuickAction::customize, QuickAction::dim,
                                      QuickAction::abLoop, QuickAction::mono, QuickAction::open, QuickAction::compact };
     for (int i = 0; i < quickColumns * 2; ++i)
         quick.push_back (actionFromId (quickIds[i], defaults[i]));
@@ -118,10 +262,16 @@ MainComponent::MainComponent (bool isHeadless)
         openGL.attachTo (*this);
        #endif
         vblank = juce::VBlankAttachment (this, [this] (double ts) { onVBlank (ts); });
+
+        if (defaultplayer::isSupported() && settings->getValue ("defaultPrompt") != "never")
+        {
+            juce::Component::SafePointer<MainComponent> safe (this);
+            juce::Timer::callAfterDelay (1500, [safe] { if (safe != nullptr) safe->askToBecomeDefault(); });
+        }
     }
 
     setWantsKeyboardFocus (true);
-    setSize (1400, 560);
+    setSize (1280, 520);
 }
 
 MainComponent::~MainComponent()
@@ -144,13 +294,25 @@ bool MainComponent::openFile (const juce::File& file, bool autoplay)
     const auto& d = engine.details();
 
     juce::StringArray meta;
-    juce::String line = d.formatName + " - " + juce::String (d.sampleRate / 1000.0, std::fmod (d.sampleRate, 1000.0) != 0.0 ? 1 : 0) + " kHz";
-    if (file.hasFileExtension ("wav;aif;aiff;flac") && d.bitsPerSample > 0) line << " - " << d.bitsPerSample << " bit";
-    else if (d.kbps > 0) line << " - " << d.kbps << " kbps";
+    const auto dot = utf8 ("  \xc2\xb7  ");
+    juce::String line = d.formatName + dot + juce::String (d.sampleRate / 1000.0, std::fmod (d.sampleRate, 1000.0) != 0.0 ? 1 : 0) + " kHz";
+    if (file.hasFileExtension ("wav;aif;aiff;flac") && d.bitsPerSample > 0) line << dot << d.bitsPerSample << " bit";
+    else if (d.kbps > 0) line << dot << d.kbps << " kbps";
+    line << dot << juce::String ((double) d.fileSize / (1024.0 * 1024.0), 1) << " MB";
     meta.add (line);
-    meta.add (juce::String ((double) d.fileSize / (1024.0 * 1024.0), 2) + " MB");
 
-    header.setTrack (info.cover, info.displayName (file), meta);
+    // title and artist from tags, else from an "Artist - Title" file name
+    juce::String title = info.title, artist = info.artist;
+    if (title.isEmpty())
+    {
+        const auto name = file.getFileNameWithoutExtension();
+        if (name.contains (" - ")) { artist = name.upToFirstOccurrenceOf (" - ", false, false).trim(); title = name.fromFirstOccurrenceOf (" - ", false, false).trim(); }
+        else title = name;
+    }
+    header.setTrack (info.cover, title, artist, meta);
+    currentTitle = title;
+    currentArtist = artist;
+    currentCover = info.cover;
     slotGrid.setCover (info.cover);
     waveform.trackChanged (file);
     analyzer.resetTrack();
@@ -228,6 +390,9 @@ void MainComponent::tickFrame (float dt)
     // 4. animations
     for (auto* a : std::initializer_list<Animated*> { &titleBar, &header, &waveform, &slotGrid, &browser })
         a->animate (dt);
+    splitHeader->animate (dt);
+    splitWave->animate (dt);
+    defaultPrompt->animate (dt);
 
     bool overlayDirty = dropGlow.tick (dt, 14.0f);
     if (toastTime > 0.0f && (toastTime -= dt) <= 0.0f) toastAlpha.target = 0.0f;
@@ -280,15 +445,39 @@ void MainComponent::paintOverChildren (juce::Graphics& g)
     }
 }
 
+MainComponent::Heights MainComponent::effectiveHeights() const
+{
+    // the plugin area keeps at least ~45 % of the window: header and waveform give way first
+    const int available = getHeight() - kTitleH;
+    int h = headerHeight, w = waveHeight;
+    const int reserve = compact ? 0 : juce::jmax (kMinPlugins, (int) (available * 0.45f));
+    int excess = h + w + reserve - available;
+    if (excess > 0) { const int cut = juce::jmin (excess, h - HeaderView::kMinHeight); h -= cut; excess -= cut; }
+    if (excess > 0) { const int cut = juce::jmin (excess, w - kMinWave); w -= cut; }
+    return { h, w };
+}
+
 void MainComponent::resized()
 {
+    const auto heights = effectiveHeights();
     auto r = getLocalBounds();
     titleBar.setBounds (r.removeFromTop (kTitleH));
-    header.setBounds (r.removeFromTop (kHeaderH));
-    waveform.setBounds (r.removeFromTop (kWaveH));
-    slotGrid.setBounds (r.reduced (6, 0).withTrimmedTop (8).withTrimmedBottom (6));
-    slotGrid.setVisible (slotGrid.getHeight() > 40);
+    header.setBounds (r.removeFromTop (heights.header));
+    waveform.setBounds (r.removeFromTop (heights.wave));
+    slotGrid.setBounds (r.reduced (6, 0).withTrimmedTop (6).withTrimmedBottom (6));
+    slotGrid.setVisible (slotGrid.getHeight() > 30);
+    splitHeader->setBounds (0, header.getBottom() - 5, getWidth(), 10);
+    splitWave->setBounds (0, waveform.getBottom() - 2, getWidth(), 10);
+    splitHeader->toFront (false);
+    splitWave->toFront (false);
     browser.setBounds (getLocalBounds().withTrimmedTop (kTitleH));
+    browser.toFront (false);
+    const int promptW = juce::jmin (getWidth() - 24, 660);
+    defaultPrompt->setBounds ((getWidth() - promptW) / 2, getHeight() - 58, promptW, 46);
+    titleBar.setMenuWidth (header.coverRight());
+    if (auto* top = getTopLevelComponent())
+        titleBar.setMaximised (top->isOnDesktop() && dynamic_cast<juce::ResizableWindow*> (top) != nullptr
+                               && static_cast<juce::ResizableWindow*> (top)->isFullScreen());
 }
 
 juce::Component::WindowControlKind MainComponent::controlAt (juce::Point<float> p) const
@@ -302,6 +491,7 @@ juce::Component::WindowControlKind MainComponent::controlAt (juce::Point<float> 
             case TitleBar::Hit::maximise: return WindowControlKind::maximise;
             case TitleBar::Hit::close:    return WindowControlKind::close;
             case TitleBar::Hit::menu:
+            case TitleBar::Hit::done:
             case TitleBar::Hit::none:     break;
         }
     }
@@ -323,6 +513,8 @@ bool MainComponent::keyPressed (const juce::KeyPress& k)
     if (k.getTextCharacter() == 'm')         { runQuickAction (-1, QuickAction::mono); return true; }
     if (k.getTextCharacter() == 'l')         { runQuickAction (-1, QuickAction::abLoop); return true; }
     if (k == juce::KeyPress::escapeKey && browser.isOpen()) { browser.close(); return true; }
+    if (k == juce::KeyPress::escapeKey && customizing)      { setCustomizing (false); return true; }
+    if (k == juce::KeyPress::escapeKey && slotGrid.restoreMaximised()) return true;
     return false;
 }
 
@@ -372,44 +564,87 @@ void MainComponent::skip (int direction)
 
 void MainComponent::showMainMenu()
 {
-    juce::PopupMenu m, cols, quickGrid, waveStyles;
+    juce::PopupMenu m, quickGrid, waveStyles, sizes;
     m.addItem (1, utf8 ("Open file\xe2\x80\xa6"), true, false);
     m.addSeparator();
-    m.addItem (2, utf8 ("Add plugin\xe2\x80\xa6"));
-    for (int c = 1; c <= 6; ++c) cols.addItem (100 + c, juce::String (c), true, c == slotGrid.getColumns());
-    m.addSubMenu ("Plugin columns", cols);
-    for (int c = 2; c <= 4; ++c) quickGrid.addItem (200 + c, juce::String (c) + utf8 (" \xc3\x97 2"), true, c == quickColumns);
-    m.addSubMenu ("Quick-access grid", quickGrid);
+    m.addItem (2, customizing ? "Done customizing" : utf8 ("Customize layout\xe2\x80\xa6"), true, customizing);
+    m.addItem (8, utf8 ("Add plugin\xe2\x80\xa6"));
     for (int i = 0; i < WaveformView::styleNames().size(); ++i)
         waveStyles.addItem (300 + i, WaveformView::styleNames()[i], true, (int) waveform.getStyle() == i);
     m.addSubMenu ("Waveform style", waveStyles);
+    for (int c = 2; c <= 4; ++c) quickGrid.addItem (200 + c, juce::String (c) + utf8 (" \xc3\x97 2"), true, c == quickColumns);
+    m.addSubMenu ("Quick-access grid", quickGrid);
+    const float scales[] = { 0.9f, 1.0f, 1.15f, 1.3f };
+    const char* scaleNames[] = { "Small", "Medium", "Large", "Extra large" };
+    for (int i = 0; i < 4; ++i) sizes.addItem (400 + i, scaleNames[i], true, std::abs (uiScale - scales[i]) < 0.01f);
+    m.addSubMenu ("Display size", sizes);
     m.addItem (3, "Reset layout");
     m.addSeparator();
     m.addItem (4, utf8 ("Audio output\xe2\x80\xa6"));
+    if (defaultplayer::isSupported())
+        m.addItem (10, utf8 ("Set as default audio player\xe2\x80\xa6"), true, defaultplayer::isDefault());
     m.addItem (5, "Compact mode", true, compact);
+   #if JUCE_WINDOWS
+    m.addItem (9, "Taskbar mini player", true, taskbarPlayer);
+   #endif
     m.addSeparator();
     m.addItem (6, "About Transport");
     m.addItem (7, "Quit");
 
     juce::Component::SafePointer<MainComponent> safe (this);
     m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&titleBar).withTargetScreenArea (
-                         titleBar.getScreenBounds().withWidth (150)),
-                     [safe] (int r)
+                         titleBar.getScreenBounds().withWidth (header.coverRight())),
+                     [safe, scales] (int r)
     {
         if (safe == nullptr || r == 0) return;
         auto& self = *safe;
         if (r == 1) self.showOpenDialog();
-        else if (r == 2) self.browser.open (-1, self.slotGrid.getIds());
-        else if (r == 3) { self.slotGrid.setColumns (3); self.slotGrid.setIds (defaultSlots); self.saveSettings(); }
+        else if (r == 2) self.setCustomizing (! self.customizing);
+        else if (r == 8) self.browser.open (-1, self.slotGrid.getIds());
+        else if (r == 3)
+        {
+            self.headerHeight = HeaderView::kDefaultHeight;
+            self.waveHeight = 56;
+            self.slotGrid.setIds (defaultSlots);
+            self.engine.setEffectChain (self.slotGrid.effectChain());
+            self.resized();
+            self.saveSettings();
+        }
         else if (r == 4) self.showAudioSettings();
         else if (r == 5) self.setCompact (! self.compact);
         else if (r == 6) juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::NoIcon, "Transport " JUCE_APPLICATION_VERSION_STRING,
                                                                  "A music player that shows you what you hear.\nBuilt with JUCE.");
         else if (r == 7) { if (self.onClose) self.onClose(); }
+        else if (r == 10) self.toast (defaultplayer::makeDefault());
+        else if (r == 9)
+        {
+            self.taskbarPlayer = ! self.taskbarPlayer;
+            if (self.onTaskbarPlayerChanged) self.onTaskbarPlayerChanged (self.taskbarPlayer);
+            self.toast (self.taskbarPlayer ? "Hover the taskbar icon for the mini player" : "Taskbar mini player off");
+            self.saveSettings();
+        }
+        else if (r >= 400) { self.setUiScale (scales[r - 400]); self.saveSettings(); }
         else if (r >= 300) { self.waveform.setStyle ((WaveformView::Style) (r - 300)); self.saveSettings(); }
         else if (r > 200) { self.quickColumns = r - 200; self.quick.resize ((size_t) self.quickColumns * 2, QuickAction::open); self.applyQuickActions(); self.saveSettings(); }
-        else if (r > 100) self.slotGrid.setColumns (r - 100);
     });
+}
+
+void MainComponent::setCustomizing (bool c)
+{
+    customizing = c;
+    slotGrid.setCustomizing (c);
+    titleBar.setCustomizing (c);
+    splitHeader->shown.target = c ? 1.0f : 0.0f;
+    splitWave->shown.target = c ? 1.0f : 0.0f;
+    if (c) toast (utf8 ("Drag slots to reorder \xc2\xb7 drag the orange handles to resize areas"));
+    refreshQuickState();
+}
+
+void MainComponent::setUiScale (float s)
+{
+    uiScale = juce::jlimit (0.75f, 1.5f, s);
+    if (! headless)
+        juce::Desktop::getInstance().setGlobalScaleFactor (uiScale);
 }
 
 void MainComponent::applyQuickActions()
@@ -439,6 +674,7 @@ void MainComponent::refreshQuickState()
     header.setQuickActive (QuickAction::dim, f.dim);
     header.setQuickActive (QuickAction::abLoop, loopA >= 0.0);
     header.setQuickActive (QuickAction::compact, compact);
+    header.setQuickActive (QuickAction::customize, customizing);
     if (auto* top = getTopLevelComponent())
         header.setQuickActive (QuickAction::alwaysOnTop, top->isAlwaysOnTop());
 }
@@ -479,6 +715,7 @@ void MainComponent::runQuickAction (int, QuickAction a)
             }
             break;
         case QuickAction::compact:  setCompact (! compact); break;
+        case QuickAction::customize: setCustomizing (! customizing); break;
         case QuickAction::snapshot: saveSnapshot(); break;
         case QuickAction::count:    break;
     }
@@ -575,28 +812,64 @@ void MainComponent::setCompact (bool c)
     compact = c;
     if (compact) expandedHeight = getHeight();
     windowHeight.snap ((float) getHeight());
-    windowHeight.target = (float) (compact ? kCompactHeight : juce::jmax (420, expandedHeight));
+    windowHeight.target = (float) (compact ? kTitleH + effectiveHeights().header + effectiveHeights().wave : juce::jmax (360, expandedHeight));
     animatingHeight = true;
     refreshQuickState();
 }
 
-void MainComponent::growForRows (int rows)
+juce::Image MainComponent::renderMiniPlayer (int width, int height)
 {
-    auto* top = getTopLevelComponent();
-    if (top == nullptr || compact || headless) return;
+    juce::Image img (juce::Image::ARGB, width, height, true);
+    juce::Graphics g (img);
+    auto r = img.getBounds().toFloat();
+    g.setColour (theme::header);
+    g.fillRect (r);
 
-    const int wanted = kCompactHeight + 14 + rows * 200 + (rows - 1) * 8;
-    if (getHeight() >= wanted) return;
+    auto art = r.removeFromLeft (r.getHeight()).reduced (r.getHeight() * 0.08f);
+    if (currentCover.isValid())
+        g.drawImage (currentCover, art, juce::RectanglePlacement::fillDestination);
+    else
+    {
+        g.setColour (juce::Colour (0xff1c1c1c));
+        g.fillEllipse (art);
+        g.setColour (theme::accent);
+        g.fillEllipse (art.withSizeKeepingCentre (art.getWidth() * 0.3f, art.getHeight() * 0.3f));
+    }
 
-    int available = wanted;
-    if (auto* display = juce::Desktop::getInstance().getDisplays().getDisplayForRect (top->getScreenBounds()))
-        available = display->userArea.getBottom() - top->getScreenY() - (top->getHeight() - getHeight());
+    auto text = r.reduced (r.getHeight() * 0.08f, r.getHeight() * 0.1f);
+    const float px = juce::jlimit (9.0f, 22.0f, text.getHeight() * 0.2f);
+    g.setColour (theme::text);
+    g.setFont (theme::font (px, true));
+    g.drawText (currentTitle.isNotEmpty() ? currentTitle : juce::String ("Transport"), text.removeFromTop (px * 1.5f), juce::Justification::centredLeft, true);
+    g.setColour (juce::Colour (0xffc8c8c8));
+    g.setFont (theme::font (px * 0.8f));
+    g.drawText (currentArtist, text.removeFromTop (px * 1.3f), juce::Justification::centredLeft, true);
 
-    const int target = juce::jmin (wanted, available);
-    if (target <= getHeight()) return;
-    windowHeight.snap ((float) getHeight());
-    windowHeight.target = (float) target;
-    animatingHeight = true;
+    auto bottom = text.removeFromBottom (px * 1.2f);
+    const double len = engine.getLength(), pos = engine.getSmoothPosition();
+    g.setFont (theme::mono (px * 0.75f, false));
+    g.drawText (formatClock (pos).fromFirstOccurrenceOf (":", false, false) + " / " + formatClock (len).fromFirstOccurrenceOf (":", false, false),
+                bottom, juce::Justification::centredRight, false);
+    auto bar = text.removeFromBottom (px * 0.5f).withHeight (juce::jmax (2.0f, px * 0.18f));
+    g.setColour (juce::Colour (0xff595959));
+    g.fillRoundedRectangle (bar, bar.getHeight() * 0.5f);
+    g.setColour (theme::accent);
+    g.fillRoundedRectangle (bar.withWidth (bar.getWidth() * (float) (len > 0.0 ? pos / len : 0.0)), bar.getHeight() * 0.5f);
+    return img;
+}
+
+juce::String MainComponent::miniPlayerKey()
+{
+    return currentTitle + (engine.isPlaying() ? "|play|" : "|pause|") + juce::String ((int) engine.getSmoothPosition());
+}
+
+void MainComponent::askToBecomeDefault()
+{
+    if (! defaultplayer::isDefault())
+    {
+        defaultPrompt->toFront (false);
+        defaultPrompt->shown.target = 1.0f;
+    }
 }
 
 void MainComponent::saveSnapshot()
@@ -636,7 +909,13 @@ void MainComponent::saveSettings()
     if (headless) return;   // snapshot / test runs never touch the user's settings
     auto* s = properties.getUserSettings();
     s->setValue ("slots", slotGrid.getIds().joinIntoString (","));
-    s->setValue ("columns", slotGrid.getColumns());
+    juce::StringArray widths;
+    for (int w : slotGrid.getWidths()) widths.add (juce::String (w));
+    s->setValue ("slotWidths", widths.joinIntoString (","));
+    s->setValue ("headerHeight", headerHeight);
+    s->setValue ("waveHeight", waveHeight);
+    s->setValue ("uiScale", (double) uiScale);
+    s->setValue ("taskbarPlayer", taskbarPlayer);
     s->setValue ("waveStyle", WaveformView::styleIds()[(int) waveform.getStyle()]);
     s->setValue ("slotStates", juce::JSON::toString (juce::var (slotGrid.getStates()), true));
     juce::StringArray ids;

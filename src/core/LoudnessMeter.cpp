@@ -67,6 +67,10 @@ void LoudnessMeter::reset()
     recentWrite = recentCount = 0;
     gatingBlocks.clear();
     gatingBlocks.reserve (36000);
+    shortTermBlocks.clear();
+    shortTermBlocks.reserve (36000);
+    cachedRange = 0.0f;
+    rangeComputedAt = 0;
     momentaryLufs = shortTermLufs = integratedLufs = -120.0f;
 }
 
@@ -108,8 +112,36 @@ void LoudnessMeter::finishBlock()
         updateIntegrated();
     }
 
+    if (recentCount >= 30)
+        shortTermBlocks.push_back (meanOfLast (30));
+
     shortTermLufs = recentCount >= 30 ? energyToLufs (meanOfLast (30))
                                       : (recentCount >= 4 ? energyToLufs (meanOfLast (recentCount)) : -120.0f);
+}
+
+float LoudnessMeter::range()
+{
+    if (shortTermBlocks.size() < 10) return 0.0f;
+    if (shortTermBlocks.size() - rangeComputedAt < 10 && rangeComputedAt > 0) return cachedRange;
+    rangeComputedAt = shortTermBlocks.size();
+
+    // absolute gate -70 LUFS, relative gate -20 LU, then the 10th..95th percentile spread
+    const double absGate = std::pow (10.0, (-70.0 + 0.691) / 10.0);
+    double sum = 0.0;
+    int n = 0;
+    for (auto e : shortTermBlocks) if (e > absGate) { sum += e; ++n; }
+    if (n == 0) return cachedRange = 0.0f;
+    const double relGate = (sum / n) * std::pow (10.0, -20.0 / 10.0);
+
+    std::vector<float> values;
+    values.reserve (shortTermBlocks.size());
+    for (auto e : shortTermBlocks)
+        if (e > absGate && e > relGate) values.push_back (energyToLufs (e));
+    if (values.size() < 2) return cachedRange = 0.0f;
+
+    std::sort (values.begin(), values.end());
+    auto percentile = [&values] (double p) { return values[(size_t) std::lround (p * (double) (values.size() - 1))]; };
+    return cachedRange = percentile (0.95) - percentile (0.10);
 }
 
 void LoudnessMeter::updateIntegrated()

@@ -1,4 +1,5 @@
 #include "MainComponent.h"
+#include "TaskbarPlayer.h"
 
 namespace tp
 {
@@ -56,21 +57,32 @@ public:
         setContentOwned (content, true);
 
         setResizable (true, false);
-        setResizeLimits (900, 250, 16000, 16000);
+        setResizeLimits (640, 240, 16000, 16000);
 
         edges = std::make_unique<juce::ResizableBorderComponent> (this, getConstrainer());
         edges->setBorderThickness (juce::BorderSize<int> (5));
         addAndMakeVisible (*edges);
 
         if (! restoreWindowStateFromString (lastWindowState()))
-            centreWithSize (1400, 560);
+            centreWithSize (1280, 520);
 
         setVisible (true);
         content->grabKeyboardFocus();
+
+        taskbar = std::make_unique<TaskbarPlayer> (*this);
+        taskbar->onPrev = [this] { content->previousTrack(); };
+        taskbar->onNext = [this] { content->nextTrack(); };
+        taskbar->onPlayPause = [this] { content->togglePlayback(); };
+        taskbar->isPlaying = [this] { return content->isPlayingNow(); };
+        taskbar->renderPreview = [this] (int w, int h) { return content->renderMiniPlayer (w, h); };
+        taskbar->stateKey = [this] { return content->miniPlayerKey(); };
+        taskbar->setEnabled (content->isTaskbarPlayerEnabled());
+        content->onTaskbarPlayerChanged = [this] (bool on) { taskbar->setEnabled (on); };
     }
 
     ~MainWindow() override
     {
+        taskbar.reset();
         storeWindowState (getWindowStateAsString());
     }
 
@@ -133,6 +145,7 @@ private:
 
     MainComponent* content = nullptr;
     std::unique_ptr<juce::ResizableBorderComponent> edges;
+    std::unique_ptr<TaskbarPlayer> taskbar;
 };
 
 //==============================================================================
@@ -196,7 +209,7 @@ juce::File writeDemoTrack()
     return file;
 }
 
-/** --snapshot out.png [--size 1400x560] [--slots vu,polar] [--states '[{...}]'] [--cols 3] [--file x.mp3] [--seek 0.3] [--seconds 4] [--browser] [--wave bars|mirror|reflection|line|spectral|3band] */
+/** --snapshot out.png [--size 1400x560] [--slots vu,polar] [--widths 1,1] [--states '[{...}]'] [--header 112 --wave-height 56] [--customize] [--file x.mp3] [--seek 0.3] [--seconds 4] [--browser] [--wave bars|mirror|reflection|line|spectral|3band] */
 int runSnapshot (const juce::StringArray& args)
 {
     auto value = [&] (const char* key, const juce::String& fallback)
@@ -214,11 +227,12 @@ int runSnapshot (const juce::StringArray& args)
 
     if (args.contains ("--slots"))
     {
-        main->getSlots().setColumns (value ("--cols", "3").getIntValue());
         juce::Array<juce::var> states;
         const auto parsed = juce::JSON::parse (value ("--states", "[]"));   // keep the var alive while reading it
         if (auto* arr = parsed.getArray()) states = *arr;
-        main->getSlots().setIds (juce::StringArray::fromTokens (value ("--slots", ""), ",", ""), states);
+        juce::Array<int> widths;
+        for (auto& w : juce::StringArray::fromTokens (value ("--widths", ""), ",", "")) widths.add (w.getIntValue());
+        main->getSlots().setIds (juce::StringArray::fromTokens (value ("--slots", ""), ",", ""), states, widths);
         main->getEngine().setEffectChain (main->getSlots().effectChain());
     }
 
@@ -240,6 +254,10 @@ int runSnapshot (const juce::StringArray& args)
     const double length = main->getEngine().getLength();
     main->getEngine().setPosition (length * value ("--seek", "0.3").getDoubleValue());
 
+    if (args.contains ("--header"))
+        main->setAreaHeights (value ("--header", "112").getIntValue(), value ("--wave-height", "56").getIntValue());
+    if (args.contains ("--customize"))
+        main->setCustomizing (true);
     if (args.contains ("--browser"))
         main->openPluginBrowser();
 

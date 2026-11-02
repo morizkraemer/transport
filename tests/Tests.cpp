@@ -50,6 +50,18 @@ void testLoudness (double sr)
     m2.process (q.data(), q.data(), (int) q.size());
     check (std::abs (m2.integrated() + 33.0f) < 0.1f, "EBU 1 kHz -33 dBFS integrated", m2.integrated(), -33.0);
 
+    // EBU Tech 3342 case 1: 20 s at -20 dBFS then 20 s at -30 dBFS -> LRA 10 LU (+-1)
+    if (sr == 48000.0)
+    {
+        auto a = sine (sr, 1000.0, -20.0, 20.0), b = sine (sr, 1000.0, -30.0, 20.0);
+        a.insert (a.end(), b.begin(), b.end());
+        tp::LoudnessMeter lra;
+        lra.prepare (sr);
+        lra.process (a.data(), a.data(), (int) a.size());
+        check (std::abs (lra.range() - 10.0f) < 1.0f, "EBU 3342 loudness range (-20 / -30 dBFS)", lra.range(), 10.0);
+        check (m.range() < 0.5f, "Steady sine has ~0 LU loudness range", m.range(), 0.0);
+    }
+
     // Gating: 10 s of silence must not drag the integrated value down
     std::vector<float> silence ((size_t) (sr * 10.0), 0.0f);
     m.process (silence.data(), silence.data(), (int) silence.size());

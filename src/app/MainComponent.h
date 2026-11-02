@@ -27,6 +27,18 @@ public:
     SlotGrid& getSlots()        { return slotGrid; }
     WaveformView& getWaveform() { return waveform; }
     void openPluginBrowser()    { browser.open (-1, slotGrid.getIds()); }
+    void setCustomizing (bool);
+    void setAreaHeights (int header, int wave) { headerHeight = header; waveHeight = wave; resized(); }
+
+    // taskbar mini player hooks
+    void previousTrack()  { skip (-1); }
+    void nextTrack()      { skip (1); }
+    void togglePlayback() { if (header.onPlayPause) header.onPlayPause(); }
+    bool isPlayingNow()   { return engine.isPlaying(); }
+    juce::Image renderMiniPlayer (int width, int height);
+    juce::String miniPlayerKey();
+    bool isTaskbarPlayerEnabled() const { return taskbarPlayer; }
+    std::function<void (bool)> onTaskbarPlayerChanged;
 
     /** Geometry-only hit test used by the window for native caption / button behaviour. */
     juce::Component::WindowControlKind controlAt (juce::Point<float> local) const;
@@ -55,7 +67,9 @@ private:
     void applyQuickActions();
     void skip (int direction);
     void setCompact (bool);
-    void growForRows (int rows);
+    void setUiScale (float);
+    struct Heights { int header, wave; };
+    Heights effectiveHeights() const;
     void saveSnapshot();
     void showAudioSettings();
     void toast (const juce::String& text);
@@ -84,6 +98,17 @@ private:
     juce::Array<juce::File> playlist;
     int playIndex = -1;
     double loopA = -1.0, loopB = -1.0;
+
+    class Splitter;
+    class DefaultPrompt;
+    std::unique_ptr<DefaultPrompt> defaultPrompt;
+    void askToBecomeDefault();
+    std::unique_ptr<Splitter> splitHeader, splitWave;
+    int headerHeight = HeaderView::kDefaultHeight, waveHeight = 56;
+    bool customizing = false, taskbarPlayer = true;
+    float uiScale = 1.0f;
+    juce::String currentTitle, currentArtist;
+    juce::Image currentCover;
 
     bool compact = false;
     int expandedHeight = 560;

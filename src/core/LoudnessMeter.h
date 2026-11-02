@@ -16,6 +16,8 @@ public:
     float momentary() const noexcept  { return momentaryLufs; }
     float shortTerm() const noexcept  { return shortTermLufs; }
     float integrated() const noexcept { return integratedLufs; }
+    /** Loudness range (EBU Tech 3342), LU. */
+    float range();
 
     static float energyToLufs (double energy) noexcept;
 
@@ -47,6 +49,9 @@ private:
     int recentWrite = 0, recentCount = 0;
 
     std::vector<double> gatingBlocks;   // 400 ms energies, one every 100 ms (75 % overlap)
+    std::vector<double> shortTermBlocks; // 3 s energies, one every 100 ms
+    float cachedRange = 0.0f;
+    size_t rangeComputedAt = 0;
 
     float momentaryLufs = -120.0f, shortTermLufs = -120.0f, integratedLufs = -120.0f;
 };

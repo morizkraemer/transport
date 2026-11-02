@@ -8,7 +8,7 @@ enum class QuickAction
 {
     monitor, playlist, addVisualizer, dim,
     open, mono, swap, soloLeft, soloRight, mid, side, bypass,
-    abLoop, alwaysOnTop, compact, snapshot,
+    abLoop, alwaysOnTop, compact, snapshot, customize,
     count
 };
 
@@ -40,6 +40,7 @@ inline const std::vector<QuickActionInfo>& quickActions()
         { QuickAction::alwaysOnTop,   "ontop",    "Always on top",     "Keep the player above other windows",    true },
         { QuickAction::compact,       "compact",  "Compact",           "Hide the plugin row",                    true },
         { QuickAction::snapshot,      "snapshot", "Snapshot",          "Save the window as a PNG",               false },
+        { QuickAction::customize,     "customize","Customize layout",  "Add, arrange and size plugins and areas", true },
     };
     return list;
 }
@@ -143,6 +144,10 @@ inline void drawQuickActionIcon (juce::Graphics& g, QuickAction a, juce::Rectang
             p.addEllipse (juce::Rectangle<float> (12, 12).withCentre (centre.translated (0, 2)));
             p.addRectangle (centre.x - 6, centre.y - 12, 12, 4);
             g.strokePath (p, juce::PathStrokeType (1.8f));
+            break;
+        case QuickAction::customize:
+            for (int i = 0; i < 4; ++i)
+                g.drawRoundedRectangle (juce::Rectangle<float> (11, 11).withCentre (centre.translated ((i % 2) ? 7.0f : -7.0f, (i / 2) ? 7.0f : -7.0f)), 2.0f, 1.8f);
             break;
         case QuickAction::count:
             break;
