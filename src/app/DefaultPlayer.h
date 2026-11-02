@@ -14,4 +14,8 @@ bool isDefault();
     page for it, where the user confirms. macOS: becomes the default viewer for common audio types.
     Returns a short message for the user. */
 juce::String makeDefault();
+
+/** Windows: if Transport registered its file types before, re-registers them so they point at this
+    .exe and show its per-type icons (after an update or a move). Elsewhere a no-op. */
+void refresh();
 }

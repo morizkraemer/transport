@@ -1,5 +1,8 @@
 #include "DefaultPlayer.h"
 #include "media/Media.h"
+#if JUCE_WINDOWS
+ #include "DocIcons.h"
+#endif
 
 #if JUCE_WINDOWS
  #ifndef NOMINMAX
@@ -14,12 +17,6 @@
 
 namespace tp::defaultplayer
 {
-namespace
-{
-const char* kExtensions[] = { ".mp3", ".wav", ".flac", ".aif", ".aiff", ".ogg", ".m4a", ".aac", ".wma" };
-const juce::String kProgId = "Transport.AudioFile";
-}
-
 #if JUCE_WINDOWS
 
 bool isSupported() { return true; }
@@ -28,47 +25,62 @@ bool isDefault()
 {
     const auto choice = juce::WindowsRegistry::getValue (
         "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\.mp3\\UserChoice\\ProgId");
-    return choice == kProgId;
+    return choice.startsWith ("Transport.");
 }
 
-juce::String makeDefault()
+namespace
+{
+/** Registers one ProgID per file type ("Transport.mp3"), each with its own icon from the .exe
+    (big type label + small Transport logo), plus the Capabilities that list Transport in Default Apps.
+    Only per user (HKCU); Windows never lets an app take the default without the user confirming. */
+void registerTypes()
 {
     using R = juce::WindowsRegistry;
     const auto exe = juce::File::getSpecialLocation (juce::File::currentExecutableFile).getFullPathName();
     const juce::String classes = "HKEY_CURRENT_USER\\Software\\Classes\\";
-
-    // a ProgID that opens files with this exe
-    R::setValue (classes + kProgId + "\\", "Audio file (Transport)");
-    R::setValue (classes + kProgId + "\\DefaultIcon\\", "\"" + exe + "\",0");
-    R::setValue (classes + kProgId + "\\shell\\open\\command\\", "\"" + exe + "\" \"%1\"");
-
-    // capabilities, so Windows lists Transport under Default Apps
     const juce::String caps = "HKEY_CURRENT_USER\\Software\\Transport\\Capabilities\\";
+    const auto videos = media::videoExtensions();
+    const juce::StringArray audio { "mp3", "wav", "flac", "aif", "aiff", "ogg", "m4a", "aac", "wma" };
+
     R::setValue (caps + "ApplicationName", "Transport");
     R::setValue (caps + "ApplicationDescription", "A music player that shows you what you hear.");
-    for (auto* ext : kExtensions)
-    {
-        R::setValue (caps + "FileAssociations\\" + ext, kProgId);
-        R::setValue (classes + ext + "\\OpenWithProgids\\" + kProgId, juce::String());
-    }
 
-    // videos: listed under "Open with" and selectable in Default Apps, but never taken over
-    const juce::String videoProgId = "Transport.VideoFile";
-    R::setValue (classes + videoProgId + "\\", "Video (Transport)");
-    R::setValue (classes + videoProgId + "\\DefaultIcon\\", "\"" + exe + "\",0");
-    R::setValue (classes + videoProgId + "\\shell\\open\\command\\", "\"" + exe + "\" \"%1\"");
-    for (auto& ext : media::videoExtensions())
+    for (const auto& entry : docicons::entries)
     {
-        R::setValue (caps + "FileAssociations\\." + ext, videoProgId);
-        R::setValue (classes + "." + ext + "\\OpenWithProgids\\" + videoProgId, juce::String());
+        const juce::String ext (entry.ext);
+        if (! (entry.video ? videos.contains (ext) : audio.contains (ext)))
+            continue;   // a type this platform can't play
+
+        const auto progId = "Transport." + ext;
+        R::setValue (classes + progId + "\\", ext.toUpperCase() + (entry.video ? " video" : " audio"));
+        R::setValue (classes + progId + "\\DefaultIcon\\", "\"" + exe + "\",-" + juce::String (entry.id));
+        R::setValue (classes + progId + "\\shell\\open\\command\\", "\"" + exe + "\" \"%1\"");
+        R::setValue (caps + "FileAssociations\\." + ext, progId);
+        R::setValue (classes + "." + ext + "\\OpenWithProgids\\" + progId, juce::String());
     }
     R::setValue ("HKEY_CURRENT_USER\\Software\\RegisteredApplications\\Transport", "Software\\Transport\\Capabilities");
 
-    SHChangeNotify (SHCNE_ASSOCCHANGED, SHCNF_IDLIST, nullptr, nullptr);
+    // older versions used one ProgID for all audio; keep it working, with the generic music icon
+    if (R::keyExists (classes + "Transport.AudioFile"))
+        R::setValue (classes + "Transport.AudioFile\\shell\\open\\command\\", "\"" + exe + "\" \"%1\"");
 
+    SHChangeNotify (SHCNE_ASSOCCHANGED, SHCNF_IDLIST, nullptr, nullptr);
+}
+} // namespace
+
+juce::String makeDefault()
+{
+    registerTypes();
     // Windows only lets the user confirm the default, so open the settings page for this app
     ShellExecuteW (nullptr, L"open", L"ms-settings:defaultapps?registeredAppUser=Transport", nullptr, nullptr, SW_SHOWNORMAL);
     return "In Settings, choose Transport and click \"Set default\"";
+}
+
+void refresh()
+{
+    // keep the registration pointing at this .exe (and its icons) when Transport is already registered
+    if (juce::WindowsRegistry::keyExists ("HKEY_CURRENT_USER\\Software\\Transport\\Capabilities"))
+        registerTypes();
 }
 
 #elif JUCE_MAC
@@ -115,8 +127,11 @@ juce::String makeDefault()
 
 #pragma clang diagnostic pop
 
+void refresh() {}   // macOS reads the icons from the app bundle
+
 #else
 
+void refresh() {}
 bool isSupported() { return false; }
 bool isDefault() { return false; }
 juce::String makeDefault() { return {}; }

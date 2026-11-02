@@ -267,6 +267,7 @@ MainComponent::MainComponent (bool isHeadless)
 
         vblank = juce::VBlankAttachment (this, [this] (double ts) { onVBlank (ts); });
 
+        defaultplayer::refresh();
         if (defaultplayer::isSupported() && settings->getValue ("defaultPrompt") != "never")
         {
             juce::Component::SafePointer<MainComponent> safe (this);

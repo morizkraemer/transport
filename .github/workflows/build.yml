@@ -53,6 +53,15 @@ jobs:
       - name: Unit tests
         run: ctest --test-dir build -C Release --output-on-failure
 
+      - name: File-type icons in the bundle (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          APP=build/Transport_artefacts/Release/Transport.app
+          plutil -p "$APP/Contents/Info.plist" | grep -c CFBundleTypeIconFile
+          test "$(plutil -p "$APP/Contents/Info.plist" | grep -c CFBundleTypeIconFile)" -ge 12
+          ls "$APP/Contents/Resources/" | grep -c '\.icns$'
+          test -f "$APP/Contents/Resources/mp3.icns" && test -f "$APP/Contents/Resources/mov.icns"
+
       - name: Video decoding (platform decoder)
         shell: bash
         run: |
