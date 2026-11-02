@@ -1,6 +1,7 @@
 // Windows: decoding through Media Foundation (part of Windows, nothing to ship).
 #include "Media.h"
 #include <juce_events/juce_events.h>
+#include <juce_graphics/juce_graphics.h>
 
 #ifndef NOMINMAX
  #define NOMINMAX
@@ -393,7 +394,7 @@ std::unique_ptr<AudioDecoder> openAudio (const juce::File& file)
 std::unique_ptr<VideoDecoder> openVideo (const juce::File& file)
 {
     StreamInfo info;
-    probe (file, info);
+    backend::probe (file, info);
     auto d = std::make_unique<MFVideo>();
     return d->open (file, info.fps) ? std::move (d) : nullptr;
 }
