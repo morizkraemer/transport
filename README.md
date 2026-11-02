@@ -4,7 +4,7 @@ A music player that shows you what you hear. Play a track and watch meters, anal
 
 ## Download
 
-Every push to `main` builds Windows, macOS and Linux versions. Grab them from the **latest** release:
+Grab the newest **vX.Y.Z** release from the Releases page (a rolling *development build* of `main` is there too):
 
 - **Windows** — `Transport-Windows-x64.exe`, just run it (no installer, no runtime needed).
 - **macOS** — `Transport-macOS.zip` (Apple Silicon + Intel). Unzip, then right-click `Transport.app` → **Open** the first time, because the app isn't notarised yet.
@@ -42,6 +42,10 @@ ctest --test-dir build -C Release      # analysis unit tests (EBU R128, FFT, ste
 On Linux install the JUCE dependencies first (see `.github/workflows/build.yml`).
 
 `Transport --snapshot out.png [--size 1400x900] [--slots spectrum,loudness] [--cols 4] [--browser]` renders the UI headlessly with a generated test track — used by CI to check the interface on every platform.
+
+## Releasing
+
+Bump `VERSION` in `CMakeLists.txt` (and add `.github/release-notes/vX.Y.Z.md`), push to `main`. CI builds Windows, macOS and Linux, runs the tests, and publishes **Transport vX.Y.Z** if that version isn't released yet. Pushing a `vX.Y.Z` tag works too.
 
 ## Architecture
 
